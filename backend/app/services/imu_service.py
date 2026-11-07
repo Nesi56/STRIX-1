@@ -124,6 +124,11 @@ class MockIMUBackend:
         self._t0 = time.monotonic()
         self._bias = (0.6, -0.4, 0.25)  # °/s, removed by calibration
         self._prev: tuple[float, float, float, float] | None = None
+        self._still_until = 0.0
+
+    def hold_still(self, seconds: float) -> None:
+        """Simulate the operator setting the airframe level and still (for calibration demos)."""
+        self._still_until = time.monotonic() + seconds
 
     def attitude(self, t: float) -> tuple[float, float, float]:
         roll = 8.0 * math.sin(0.30 * t) + 2.5 * math.sin(1.13 * t + 0.4)
@@ -134,6 +139,9 @@ class MockIMUBackend:
     def read(self):
         t = time.monotonic() - self._t0
         roll, pitch, yaw = self.attitude(t)
+        if time.monotonic() < self._still_until:
+            roll = pitch = 0.0
+            yaw = self._prev[3] if self._prev else 0.0
         if self._prev is None:
             p = q = r = 0.0
         else:
@@ -363,6 +371,9 @@ class IMUService:
         if self.latest() is None:
             raise CalibrationError("IMU has no live data; cannot calibrate")
         self._cal_state = {"state": "calibrating", "started_at": time.time(), "duration_s": duration_s}
+        if isinstance(self._backend, MockIMUBackend):
+            self._backend.hold_still(duration_s + 0.6)  # synthetic: "operator holds it still"
+            await asyncio.sleep(0.3)  # let the synthetic motion settle before collecting
         self._cal_collect = []
         try:
             await asyncio.sleep(duration_s)

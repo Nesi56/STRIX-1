@@ -142,3 +142,15 @@ def test_unknown_api_path_404(client):
 def test_spa_fallback_without_build(client):
     r = client.get("/")
     assert r.status_code == 200 and "STRIX-1" in r.text
+
+
+def test_imu_calibration_flow_in_demo_mode(client):
+    r = client.post("/api/imu/calibrate", json={"duration_s": 1.5, "level": True})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["state"] == "calibrated"
+    bias = body["calibration"]["gyro_bias_dps"]
+    assert abs(bias[0] - 0.6) < 0.1 and abs(bias[1] + 0.4) < 0.1  # synthetic bias recovered
+    assert client.get("/api/imu").json()["calibration"]["state"] == "calibrated"
+    assert client.delete("/api/imu/calibration").json()["state"] == "uncalibrated"
+    assert client.post("/api/imu/calibrate", json={"duration_s": 0.1}).status_code == 422

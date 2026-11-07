@@ -1,0 +1,222 @@
+// Types mirror the backend payloads (backend/app/services/*). All timestamps
+// are UNIX seconds (server clock) unless suffixed with _ms.
+
+export type DeviceState = "starting" | "ok" | "degraded" | "synthetic" | "disconnected" | "disabled" | "error";
+
+export interface DeviceStatus {
+  name: string;
+  state: DeviceState;
+  backend: string;
+  synthetic: boolean;
+  error: string | null;
+  detail: Record<string, unknown>;
+  last_update: number | null;
+}
+
+export interface Vec3 { x: number; y: number; z: number }
+
+export interface ImuSample {
+  ts: number;
+  seq: number;
+  accel: Vec3; // m/s²
+  gyro: Vec3; // °/s
+  temp_c: number | null;
+  orientation: { roll: number; pitch: number; yaw_relative: number; accel_trust: number; accel_norm_g: number };
+  rate_hz: number | null;
+  saturated: boolean;
+}
+
+export interface HealthFinding { severity: "info" | "warning" | "critical"; code: string; message: string }
+
+export interface EnvSample { ts: number; temperature_c: number; temperature_f: number; humidity_pct: number }
+
+export interface EnvSummary {
+  status: DeviceStatus;
+  latest: EnvSample | null;
+  age_s: number | null;
+  stale: boolean;
+  session: { temp_min: number | null; temp_max: number | null; hum_min: number | null; hum_max: number | null; since: number };
+  reads: number;
+  failures: number;
+  interval_s: number;
+  accuracy: { temperature_c: number; humidity_pct: number };
+}
+
+export interface ServoState {
+  status: DeviceStatus;
+  available: boolean;
+  armed: boolean;
+  target_angle: number | null;
+  commanded_angle: number | null;
+  moving: boolean;
+  attached: boolean;
+  limits: { min_angle: number; max_angle: number; center_angle: number; max_speed_dps: number; hardware_min: number; hardware_max: number };
+  pulse_range_us: [number, number];
+  gpio: number;
+  position_feedback: boolean;
+  requested_angle?: number;
+  clamped?: boolean;
+}
+
+export interface CameraMode { width: number; height: number; fps: number[] }
+
+export interface CameraStatus {
+  status: DeviceStatus;
+  available: boolean;
+  width: number | null;
+  height: number | null;
+  target_fps: number | null;
+  measured_fps: number;
+  frame_seq: number;
+  last_frame_ts: number | null;
+  last_frame_bytes: number | null;
+  timestamp_method: string | null;
+  recording: { active: boolean; file: string | null; started_at: number | null; duration_s: number | null; bytes: number | null; error: string | null };
+  stream: { mjpeg_url: string; webrtc_enabled: boolean };
+  info?: { model: string | null; sensor_mode: { size: number[]; fps: number; bit_depth: number } | null; modes: CameraMode[]; raw_sensor_modes: { size: number[]; fps: number; bit_depth: number }[] } | null;
+  fps_note?: string;
+}
+
+export interface PowerInfo {
+  throttled: Record<string, boolean | string> | null;
+  pmic: { input_voltage_v: number | null; rail_power_w: number | null } | null;
+  undervoltage_now: boolean | null;
+  undervoltage_occurred: boolean | null;
+  input_voltage_v: number | null;
+  source: string | null;
+  battery: { available: boolean; percent: number | null; reason: string };
+}
+
+export interface SystemInfo {
+  ts: number;
+  hostname: string;
+  pi_model: string | null;
+  is_raspberry_pi: boolean;
+  cpu_percent: number;
+  cpu_per_core: number[];
+  cpu_count: number;
+  cpu_freq_mhz: number | null;
+  load_avg: number[];
+  cpu_temp_c: number | null;
+  memory: { total_mb: number; available_mb: number; used_percent: number; swap_used_percent: number };
+  disk: { total_gb: number; free_gb: number; percent: number } | null;
+  network: { rx_bps: number | null; tx_bps: number | null; wireless: Record<string, { link_quality: number; signal_dbm: number }> };
+  power: PowerInfo;
+  processes: Record<string, { pid: number; cpu_percent: number; rss_mb: number; name?: string; threads?: number }>;
+  uptime_s: number;
+  warnings: HealthFinding[];
+}
+
+export interface AIStats {
+  latency_ms?: number; ttft_ms?: number | null; tokens_per_s?: number | null; prompt_tokens?: number | null;
+  completion_tokens?: number | null; cost_usd?: number | null; tokens_estimated?: boolean; ts?: number;
+}
+
+export interface AIBrief {
+  provider: string; label: string; enabled: boolean; state: string; detail: string | null; busy?: boolean; queued?: number;
+  vision_capable: boolean; model_id?: string; model?: string; configured?: boolean; local: boolean;
+  daily_used?: number; daily_limit?: number; last: AIStats | null;
+}
+
+export interface LocalizationSource {
+  id: string; name: string; kind: string; installed: boolean; running: boolean; validated: boolean;
+  experimental: boolean; note: string; frame: string;
+}
+
+export interface Detection {
+  label: string; category: string; method: string; confidence: number; bbox: [number, number, number, number];
+  area_fraction?: number;
+}
+
+export interface Observation {
+  id: string; ts: number; kind: string; trigger: string;
+  frame: { width: number; height: number; source?: string; frame_seq?: number; snapshot?: string; synthetic?: boolean };
+  detections: Detection[];
+  metrics: Record<string, number | null>;
+  quality_flags: string[];
+  methods: string[];
+  summary: string;
+  processing_ms: number;
+  note: string;
+}
+
+export interface VOState {
+  enabled: boolean;
+  error: string | null;
+  experimental: boolean;
+  validated: boolean;
+  synthetic_input?: boolean;
+  estimate?: {
+    state: string; frames: number; accepted_steps: number; lost_events: number;
+    quality: { features?: number; matches?: number; inliers?: number; inlier_ratio?: number; parallax_px?: number };
+    path_length_units: number; running_s: number;
+    trajectory: { ts: number; x: number; y: number; z: number }[];
+    units: string; drift: string;
+  } | null;
+}
+
+export interface MappingState {
+  position: { available: boolean; message: string; source: string | null };
+  sources: LocalizationSource[];
+  visual_odometry: VOState;
+  vision: { available: boolean; error: string | null; methods: string[]; auto_interval_s: number; observations: number; latest: Observation | null };
+  imu_position: string;
+}
+
+export interface RecordingStatus {
+  active: boolean;
+  session: { id: number; name: string; started_at: number; synthetic: boolean; duration_s: number; rows: number } | null;
+  sample_hz: number;
+  db_bytes: number;
+  dropped_writes: number;
+  retention_days: number;
+}
+
+export interface TelemetryEvent { ts: number; level: string; source: string; message: string }
+
+export interface TelemetryState {
+  ts: number;
+  seq: number;
+  demo_mode: boolean;
+  imu: { status: DeviceStatus; latest: ImuSample | null };
+  imu_health: HealthFinding[];
+  imu_calibration: { state: string; yaw_drift_bound_deg: number | null; calibrated_at: number | null } | null;
+  environment: EnvSummary | null;
+  servo: ServoState | null;
+  camera: CameraStatus | null;
+  system: SystemInfo | null;
+  ai: { qwen: AIBrief; grok: AIBrief } | null;
+  mapping: MappingState | null;
+  recording: RecordingStatus | null;
+}
+
+export interface Session {
+  id: number; name: string; notes: string | null; started_at: number; ended_at: number | null; sample_hz: number;
+  synthetic: boolean; samples: number; duration_s: number; active: boolean; metadata: Record<string, unknown>;
+}
+
+export interface TelemetryRow {
+  ts: number; ax: number | null; ay: number | null; az: number | null; gx: number | null; gy: number | null; gz: number | null;
+  imu_temp: number | null; roll: number | null; pitch: number | null; yaw_rel: number | null; env_temp: number | null;
+  humidity: number | null; env_ts: number | null; servo_angle: number | null; cpu_percent: number | null;
+  mem_percent: number | null; cpu_temp: number | null; camera_fps: number | null; status: Record<string, string>;
+}
+
+export interface MediaFile { name: string; bytes: number; modified: number; synthetic: boolean }
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  ts: number;
+  provider?: string | null;
+  label?: string;
+  local?: boolean;
+  streaming?: boolean;
+  error?: string;
+  notes?: string[];
+  stats?: AIStats;
+  telemetry_shared?: boolean;
+  image_sent?: boolean;
+  sanitized?: boolean;
+}
