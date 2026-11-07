@@ -1,0 +1,6 @@
+# Development / CI on a non-Pi machine (mock hardware mode).
+-r requirements.txt
+numpy>=1.24
+opencv-python-headless>=4.8,<5   # Pi OS ships OpenCV 4.x; keep dev identical
+pytest>=8
+pytest-asyncio>=0.23

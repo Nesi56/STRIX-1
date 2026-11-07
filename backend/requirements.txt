@@ -1,0 +1,11 @@
+# STRIX-1 backend — core dependencies (all platforms).
+# On the Raspberry Pi, numpy / OpenCV / Picamera2 / gpiozero / lgpio come from
+# Raspberry Pi OS apt packages (see scripts/install_pi.sh) so that they stay
+# ABI-compatible with the system libcamera build. Do NOT pip-install numpy over
+# the system copy on the Pi.
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+pydantic>=2.7,<3
+pydantic-settings>=2.3,<3
+httpx>=0.27,<1
+psutil>=5.9
