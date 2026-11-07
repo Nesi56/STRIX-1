@@ -1,0 +1,20 @@
+# OPTIONAL, EXPERIMENTAL: MediaMTX relay for low-latency WebRTC video.
+# STRIX-1 pushes H.264 to rtsp://127.0.0.1:8554/strix when STRIX_WEBRTC_ENABLED=true;
+# the browser negotiates WebRTC (WHEP) through the authenticated backend proxy.
+# Key names follow MediaMTX v1.x — check them against the version you install.
+logLevel: info
+
+rtsp: yes
+rtspAddress: 127.0.0.1:8554      # only the local backend publishes
+rtmp: no
+hls: no
+srt: no
+
+webrtc: yes
+webrtcAddress: 127.0.0.1:8889     # signalling reached only via the STRIX-1 proxy
+webrtcLocalUDPAddress: :8189      # media (UDP) to browsers on the LAN
+webrtcAdditionalHosts: []         # add the Pi's LAN IP if ICE fails
+
+paths:
+  strix:
+    source: publisher

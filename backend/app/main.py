@@ -10,14 +10,15 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.api.api import public, router
+from app.api.api import public, require_auth, router
 from app.api.auth import AuthManager
 from app.api.network_guard import LocalNetworkGuard
 from app.api.websocket import ws_router
@@ -49,8 +50,9 @@ def create_app(settings: Settings | None = None, container: Container | None = N
             log.info("STRIX-1 shutting down")
             await c.stop()
 
+    # Built-in docs routes are disabled; authenticated equivalents are added below.
     app = FastAPI(title="STRIX-1 Ground Station", version=__version__, lifespan=lifespan,
-                  docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
+                  docs_url=None, openapi_url=None, redoc_url=None)
     app.state.settings = settings
     app.state.container = container or Container(settings)
     app.state.auth = AuthManager(settings)
@@ -75,6 +77,14 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     async def unhandled(request: Request, exc: Exception):
         log.exception("unhandled error on %s", request.url.path)
         return JSONResponse({"error": {"code": "internal_error", "message": "internal server error"}}, status_code=500)
+
+    @app.get("/api/openapi.json", include_in_schema=False, dependencies=[Depends(require_auth)])
+    async def openapi_schema():
+        return JSONResponse(app.openapi())
+
+    @app.get("/api/docs", include_in_schema=False, dependencies=[Depends(require_auth)])
+    async def api_docs():
+        return get_swagger_ui_html(openapi_url="/api/openapi.json", title="STRIX-1 API")
 
     app.include_router(public)
     app.include_router(router)

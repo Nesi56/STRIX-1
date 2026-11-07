@@ -1,0 +1,21 @@
+# Local Qwen inference server for STRIX-1 (llama.cpp). Installed by scripts/install_llama_service.sh.
+# Listens on localhost only. MemoryMax protects sensor/camera services from LLM memory pressure.
+# Vision model alternative (downloads model + projector on first start, needs curl-enabled build):
+#   ExecStart=__BIN__ -hf ggml-org/Qwen2.5-VL-3B-Instruct-GGUF -c __CTX__ -t __THREADS__ --host 127.0.0.1 --port 8080
+[Unit]
+Description=STRIX-1 local Qwen (llama-server)
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+ExecStart=__BIN__ -m __MODEL__ -c __CTX__ -t __THREADS__ --host 127.0.0.1 --port 8080
+Nice=5
+MemoryMax=9G
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

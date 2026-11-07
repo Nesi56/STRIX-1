@@ -1,0 +1,32 @@
+# STRIX-1 backend — rendered and installed by scripts/install_pi.sh --systemd
+# (__USER__ and __REPO__ are replaced with the real user and repository path).
+[Unit]
+Description=STRIX-1 ground station backend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+SupplementaryGroups=video i2c gpio
+WorkingDirectory=__REPO__/backend
+# Settings are read from __REPO__/.env by the application itself.
+ExecStart=__REPO__/backend/.venv/bin/python -m app.main
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGINT
+
+# Hardening that keeps camera / I2C / GPIO / vcgencmd device access working.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__REPO__/data
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

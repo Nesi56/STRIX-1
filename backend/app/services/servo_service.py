@@ -250,7 +250,10 @@ class ServoService:
             self.status.backend, self.status.synthetic = MockServoBackend.name, True
             return MockServoBackend()
         errors = []
-        for c in (["hardware_pwm", "gpiozero"] if mode == "auto" else [mode]):
+        # "auto" never probes sysfs PWM: on the Pi 5 a pwmchip may belong to the
+        # cooling-fan controller. Hardware PWM must be selected explicitly after
+        # verifying chip/channel (docs/HARDWARE.md).
+        for c in (["gpiozero"] if mode == "auto" else [mode]):
             try:
                 b: ServoBackend = SysfsPWMServoBackend(self.settings) if c == "hardware_pwm" else GpiozeroServoBackend(self.settings)
                 self.status.backend, self.status.synthetic = b.name, False

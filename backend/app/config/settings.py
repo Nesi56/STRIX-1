@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     servo_min_pulse_us: int = Field(500, ge=300, le=1500)  # pulse at 0°
     servo_max_pulse_us: int = Field(2400, ge=1500, le=2700)  # pulse at 180°
     servo_max_speed_dps: float = Field(60.0, ge=5.0, le=360.0)
+    # Only used with servo_backend="hardware_pwm" (never chosen by "auto").
     servo_pwm_chip: int = 0
     servo_pwm_channel: int = 2  # Pi 5: GPIO18 = RP1 PWM0 channel 2 (verify!)
     servo_detach_when_idle: bool = True
@@ -192,6 +193,18 @@ class Settings(BaseSettings):
     )
 
     # ---------------------------------------------------------------- helpers
+    @field_validator("imu_address", mode="before")
+    @classmethod
+    def _parse_address(cls, v: object) -> object:
+        # Accept "0x68" as well as "104" from environment files.
+        return int(v.strip(), 0) if isinstance(v, str) else v
+
+    @field_validator("imu_accel_range_g", "imu_gyro_range_dps", "imu_dlpf_hz", mode="before")
+    @classmethod
+    def _coerce_literal_int(cls, v: object) -> object:
+        # Environment values are strings; Literal[int] needs real ints.
+        return int(v.strip()) if isinstance(v, str) and v.strip().lstrip("-").isdigit() else v
+
     @field_validator("imu_axis_map")
     @classmethod
     def _validate_axis_map(cls, v: str) -> str:

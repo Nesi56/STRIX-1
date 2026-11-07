@@ -30,7 +30,8 @@ function drawOverlay(ctx: CanvasRenderingContext2D, w: number, h: number, obs: O
   ctx.lineWidth = Math.max(1.5, w / 640);
   ctx.font = `${Math.max(11, Math.round(w / 70))}px ui-monospace, monospace`;
   for (const d of obs.detections) {
-    if (d.category === "sky") continue;
+    // Frame-spanning regions (sky, large ground cover) are listed in Mode B, not boxed here.
+    if (d.category === "sky" || (d.area_fraction ?? 0) > 0.45) continue;
     const [x, y, bw, bh] = d.bbox;
     const color = CAT_COLOR[d.category] ?? "#38d6ff";
     ctx.strokeStyle = color;

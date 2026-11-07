@@ -154,3 +154,11 @@ def test_imu_calibration_flow_in_demo_mode(client):
     assert client.get("/api/imu").json()["calibration"]["state"] == "calibrated"
     assert client.delete("/api/imu/calibration").json()["state"] == "uncalibrated"
     assert client.post("/api/imu/calibrate", json={"duration_s": 0.1}).status_code == 422
+
+
+def test_api_docs_require_auth(anon_client, client):
+    assert anon_client.get("/api/openapi.json").status_code == 401
+    assert anon_client.get("/api/docs").status_code == 401
+    schema = client.get("/api/openapi.json").json()
+    assert "/api/servo/angle" in schema["paths"] and "/api/ai/chat" in schema["paths"]
+    assert client.get("/api/docs").status_code == 200

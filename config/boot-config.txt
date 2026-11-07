@@ -1,0 +1,12 @@
+
+# --- STRIX-1 BEGIN (appended by scripts/install_pi.sh --configure-boot) ---
+# I2C bus 1 on GPIO2/GPIO3 (physical pins 3/5) for the MPU6050.
+dtparam=i2c_arm=on
+# Kernel DHT11 driver on GPIO4 (physical pin 7) → /sys/bus/iio/devices/iio:deviceN
+dtoverlay=dht11,gpiopin=4
+# OPTIONAL hardware PWM for the camera servo on GPIO18 (physical pin 12).
+# Not enabled by default — verify on your kernel first (docs/HARDWARE.md, "Hardware PWM"):
+#   dtoverlay=pwm-pio,gpio=18        (Pi 5 PIO-based PWM on any GPIO)
+# then set STRIX_SERVO_BACKEND=hardware_pwm with the matching STRIX_SERVO_PWM_CHIP/CHANNEL.
+# Camera Module 3 is auto-detected (camera_auto_detect=1 is the Raspberry Pi OS default).
+# --- STRIX-1 END ---

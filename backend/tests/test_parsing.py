@@ -102,3 +102,32 @@ def test_axis_map():
     for bad in ("x,y", "x,x,z", "x,y,w"):
         with pytest.raises(ValueError):
             parse_axis_map(bad)
+
+
+def test_env_example_parses(tmp_path):
+    """The shipped .env.example (with inline comments) must load cleanly."""
+    from pathlib import Path
+
+    from app.config.settings import REPO_ROOT, Settings
+
+    s = Settings(_env_file=str(REPO_ROOT / ".env.example"))
+    assert s.imu_address == 0x68 and s.imu_accel_range_g == 4 and s.imu_dlpf_hz == 44
+    assert s.host == "0.0.0.0" and s.port == 8000 and s.mock is False
+    assert s.grok_enabled is False
+    # Empty values parse as empty secrets; services treat them as "not configured".
+    assert not (s.xai_api_key and s.xai_api_key.get_secret_value().strip())
+    assert not (s.auth_token and s.auth_token.get_secret_value().strip())
+    assert s.servo_backend == "auto" and s.qwen_threads == 3
+    assert Path(s.qwen_model_path).name.endswith(".gguf")
+
+
+def test_env_strings_are_coerced(tmp_path, monkeypatch):
+    from app.config.settings import Settings
+
+    monkeypatch.setenv("STRIX_IMU_ADDRESS", "0x69")
+    monkeypatch.setenv("STRIX_IMU_GYRO_RANGE_DPS", "1000")
+    s = Settings(_env_file=None)
+    assert s.imu_address == 0x69 and s.imu_gyro_range_dps == 1000
+    monkeypatch.setenv("STRIX_IMU_GYRO_RANGE_DPS", "300")
+    with pytest.raises(Exception):
+        Settings(_env_file=None)
