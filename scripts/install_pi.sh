@@ -133,8 +133,17 @@ if [ "$SYSTEMD" = 1 ]; then
   $SUDO systemctl --no-pager status strix1.service | head -n 5 || true
 fi
 
+# Qwen + YOLO: once installed, Qwen starts automatically (strix1-llama service, or the backend itself).
+if ! ls "$REPO"/models/*.gguf >/dev/null 2>&1; then
+  if [ "$YES" != 1 ] && confirm "Install the AI now (YOLO detector + Qwen vision model, ~3-4 GB download, 20-30 min)?"; then
+    "$REPO/scripts/setup_ai.sh"
+  else
+    warn "Qwen is not installed yet. Run scripts/setup_ai.sh once (inside tmux); after that it starts by itself."
+  fi
+fi
+
 PORT="$(grep -E '^STRIX_PORT=' .env | cut -d= -f2 | awk '{print $1}')"; PORT="${PORT:-8000}"
 say "Done. Start manually with:  $REPO/scripts/run_backend.sh"
 say "Then open  http://$(hostname).local:${PORT}  or  http://$(hostname -I 2>/dev/null | awk '{print $1}'):${PORT}  from your laptop."
-say "Detector model:  scripts/get_detector_model.sh   ·   Local Qwen: docs/AI.md"
+say "AI (YOLO + Qwen):  scripts/setup_ai.sh   ·   docs/AI.md"
 say "Verify hardware:  scripts/verify_all.sh"

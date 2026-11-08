@@ -23,7 +23,7 @@ from app.services.imu_service import IMUService
 from app.services.mapping_service import MappingService
 from app.services.memory_service import MemoryService
 from app.services.recording_service import RecordingService
-from app.services.servo_service import ServoService
+from app.services.servo_service import ServoService, prepare_lgpio_workdir
 from app.services.system_monitor import SystemMonitor
 from app.services.telemetry_service import TelemetryService
 
@@ -34,6 +34,7 @@ class Container:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         settings.data_dir.mkdir(parents=True, exist_ok=True)
+        prepare_lgpio_workdir(settings)  # before the IMU/DHT/servo drivers load lgpio (Pi 5)
         self.events = EventLog()
         self.db = Database(settings.db_path)
         self.system = SystemMonitor(settings, self.events)

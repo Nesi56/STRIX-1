@@ -3,8 +3,8 @@
 STRIX-1 runs **one** AI model: a small **Qwen** model running locally on the Raspberry Pi 5 through
 llama.cpp. No cloud service is used. Qwen:
 
-1. **sees**: with the Qwen-VL vision model it looks at the current camera frame and identifies what is there (`[SEEN]`),
-2. **reacts to YOLO**: in WATCH mode it comments by itself when YOLO detects new objects,
+1. **sees**: with the Qwen-VL vision model it looks at the current camera frame and identifies what is there,
+2. **reacts to YOLO**: it comments by itself when YOLO detects new objects or an object goes under a cup,
 3. **controls the camera tilt servo** (look up/down, center, scan, find an object, keep it centered,
    go back to a remembered object),
 4. **reads the sensors**: MPU6050 attitude, DHT11 temperature/humidity, and YOLO detections,
@@ -16,7 +16,7 @@ llama.cpp. No cloud service is used. Qwen:
 
 ## The agent graph
 
-The dashboard's **AGENT GRAPH** tab lights up each stage as it runs:
+Each request runs through these stages (the chat shows the camera steps while they run):
 
 ```
 GENERATOR ──plan──▶ EXECUTION LOOP [ OBSERVER → PILOT → UNTIL ↺ ] ──complete──▶ REPORT
@@ -28,7 +28,7 @@ GENERATOR ──plan──▶ EXECUTION LOOP [ OBSERVER → PILOT → UNTIL ↺ 
 | **OBSERVER** | Snapshot of IMU, DHT11, servo state and the newest YOLO detections (with range/bearing). | `ai_context.observe` |
 | **PILOT** | Starts the skill on the camera servo. All motion goes through `ServoService`, which enforces the safe limits, the slew rate and the operator's enable switch. | `agent_service._skill` |
 | **UNTIL** | Polls the skill's completion condition at the detector rate: *reached*, *found*, *centered* or timeout. | `agent_service._skill` |
-| **REPORT** | Qwen writes the answer from the final observation, the action log and **deterministic** movement suggestions. Tags: `[MEASURED]`, `[DETECTED]`, `SUGGEST:`, `[INTERPRETATION]`, `[UNAVAILABLE]`. | `ai_context.REPORT_PROMPT` |
+| **REPORT** | Qwen answers in 1–4 short plain sentences from the final observation, the action log and **deterministic** movement suggestions ("Turn the drone right about 15°"). Distances are said as "about". | `ai_context.REPORT_PROMPT` |
 
 ### Skills (the only things the agent can do)
 
@@ -63,11 +63,12 @@ The servo only tilts. Horizontal alignment is given as a suggestion ("yaw right 
 
 ### Safety rules
 
-- The only actuator is the camera tilt servo. Motion requires the operator to **enable servo
-  control** (E key or the button). With control disabled the agent still observes and advises,
-  and reports that it couldn't move the camera.
-- **EMERGENCY STOP** (button or Space) disables servo control and cancels the agent immediately,
-  including an in-flight Qwen request. **Esc** stops just the agent.
+- The only actuator is the camera tilt servo. It moves only for something the operator asked for
+  (a task for Qwen, AIM, the tilt buttons/keys), which turns servo control on. Qwen's automatic comments
+  never move it.
+- **EMERGENCY STOP** (button or Space) turns servo control off and cancels the agent immediately,
+  including an in-flight Qwen request. It **latches**: tasks and buttons can't move the camera until the
+  operator presses **Servo on** (or E). **Esc** stops just the agent.
 - Model output is never executed; shell/code blocks are stripped from answers.
 - Everything runs on the Pi; no data leaves the local network.
 
@@ -93,11 +94,10 @@ elsewhere.
 
 When the container is lifted and the object is there, the memory logs *"revealed after 22 s hidden under
 cup #2: memory was right"*. If it turns up somewhere else, it logs *"memory corrected"*. Qwen sees the
-memory in its observation (`MEMORY:` lines, `[REMEMBERED]` tag). In WATCH mode it announces hide, reveal and
-relocation events in the chat.
+memory in its observation (`MEMORY:` lines) and announces hide, reveal and relocation events in the chat by itself.
 
 **Send it to a remembered target.** Ask *"where is the ball?"*, *"go to the remembered target"* or *"aim at
-#4"*, or press **AIM** in the MEMORY tab. The `goto` skill tilts the camera to the remembered elevation and
+#4"*, or press **AIM** in the Memory panel. The `goto` skill tilts the camera to the remembered elevation and
 returns pilot advice ("Yaw left ~14° to face sports ball #4. It is ~0.7 m away"). It never moves the aircraft.
 
 Limits (shown in the UI): the drone is assumed to hold its position, relative yaw drifts until the IMU is
@@ -131,19 +131,18 @@ STRIX-1 takes the same idea in a form that fits on the Pi:
 When the loaded model reports vision support (llama-server `/props` → `modalities.vision`), STRIX-1 attaches
 the newest camera frame (scaled to 448 px wide, `STRIX_AGENT_IMAGE_PX`) to the REPORT for visual requests
 ("identify this", "what do you see", "describe", "how many…", "what colour…") and for `scan`/`find` tasks.
-Qwen marks what it identifies in the image as `[SEEN]`, kept separate from YOLO's `[DETECTED]` boxes. The chat
-shows **SAW CAMERA IMAGE** on those answers. A text-only model never receives images; it says
-`[UNAVAILABLE]` for visual identification instead.
+The chat shows a small image icon on those answers. A text-only model never receives images; it says it can
+only name the YOLO objects instead.
 
-## WATCH mode: Qwen responds to YOLO
+## Qwen speaks up by itself
 
-With **WATCH ON** (chat header, default on), a background loop checks the YOLO detections every second.
-When the set of prompted objects changes and stays stable for ~2 s, Qwen writes a 1–2 sentence comment
-(with the camera image if it has vision): what appeared, estimated distance/direction, and a `SUGGEST:`
-line. Comments are at least `STRIX_AGENT_WATCH_INTERVAL_S` (20 s) apart, never run during an operator
-task, and are cancelled the moment you give Qwen a task. Without Qwen, a rule-based announcement is used.
+A background loop checks the YOLO detections and the object memory every second. When the set of objects
+changes and stays stable for ~2 s, or an object goes under / comes out from a cup, Qwen writes one short
+sentence (with the camera image if it has vision). Object comments are at least
+`STRIX_AGENT_WATCH_INTERVAL_S` (20 s) apart; memory events at least 5 s. They never run during an operator
+task. Without Qwen, a rule-based sentence is used. Turn it off with `STRIX_AGENT_WATCH=false`.
 
-## Running Qwen on the Pi 5 — one command
+## Running Qwen on the Pi 5 — one command, then it starts by itself
 
 ```bash
 cd ~/STRIX-1 && scripts/setup_ai.sh          # Qwen2.5-VL-3B-Instruct (best quality)
@@ -157,6 +156,11 @@ The script:
 4. installs the `strix1-llama` service (localhost only)
 5. writes the `QWEN_*` settings into `.env`
 6. restarts STRIX-1 and waits until Qwen answers
+
+After that Qwen starts automatically on every boot (the `strix1-llama` service). As a backup, the
+STRIX-1 backend starts llama-server itself when no Qwen server answers within ~20 s and a model is in
+`models/` (`QWEN_MANAGE_SERVER=auto`, the default). Paths are auto-detected:
+`~/llama.cpp/build/bin/llama-server` and the `.gguf` files in `models/`.
 
 It is safe to re-run. Run it inside `tmux`; it downloads about 3–4 GB and the build takes 10–20 minutes.
 
@@ -197,4 +201,4 @@ a closed-vocabulary detector, not open-vocabulary.
 - "Look up 15 degrees" / "center the camera".
 - "Is the IMU behaving normally?" → uses the deterministic IMU health checks.
 - "What are the temperature and humidity?"
-- "Where is the ball?" / "Send it to the remembered target" / "What do you remember?" → `goto` + `[REMEMBERED]` report.
+- "Where is the ball?" / "Send it to the remembered target" / "What do you remember?" → `goto` and an answer from memory.

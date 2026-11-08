@@ -157,13 +157,15 @@ class Settings(BaseSettings):
     qwen_server_url: str = Field(
         "http://127.0.0.1:8080", validation_alias=_alias("QWEN_SERVER_URL", "qwen_server_url")
     )
-    qwen_manage_server: bool = Field(
-        False, validation_alias=_alias("QWEN_MANAGE_SERVER", "qwen_manage_server")
+    # "auto": if no Qwen server answers, start llama-server ourselves when a model is installed in models/
+    qwen_manage_server: bool | Literal["auto"] = Field(
+        "auto", validation_alias=_alias("QWEN_MANAGE_SERVER", "qwen_manage_server")
     )
     qwen_llama_server_bin: str = Field(
         "llama-server", validation_alias=_alias("QWEN_LLAMA_SERVER_BIN", "qwen_llama_server_bin")
     )
     qwen_model_path: str = Field("", validation_alias=_alias("QWEN_MODEL_PATH", "qwen_model_path"))
+    models_dir: Path = REPO_ROOT / "models"
     qwen_mmproj_path: str = Field(
         "", validation_alias=_alias("QWEN_MMPROJ_PATH", "qwen_mmproj_path")
     )

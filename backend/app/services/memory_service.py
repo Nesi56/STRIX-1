@@ -173,10 +173,10 @@ class ObjectMemory:
                 off = ang_dist(d["az"], d["el"], t.az, t.el)
                 if off > 2 * self.gate_deg:
                     t.relocated_by_deg = round(off, 1)
-                    where = (f" (memory said: under {self.name(self.tracks.get(t.contained_by or -1))})"
+                    where = (f" (I thought it was under {self.name(self.tracks.get(t.contained_by or -1))})"
                              if t.contained_by else "")
                     self._event(now, "relocated",
-                                f"{self.name(t)} found {off:.0f}° from where it was remembered{where}; memory corrected", t)
+                                f"{self.name(t)} turned up {off:.0f}° from where I remembered it{where} — memory updated", t)
                 self._apply(t, d, now, snap=True)
                 matched.add(t.id)
                 continue
@@ -210,10 +210,10 @@ class ObjectMemory:
                 t.anchor_az, t.cont_el0, t.missed = cont.az, cont.el, 0
                 t.drop_m = -t.range_m * math.sin(math.radians(t.el)) if t.range_m else None
                 t.cont_drop_m = -cont.range_m * math.sin(math.radians(cont.el)) if cont.range_m else None
-                self._event(now, "hidden", f"{self.name(t)} disappeared under {self.name(cont)}: now HIDDEN inside it", t)
+                self._event(now, "hidden", f"{self.name(t)} went under {self.name(cont)}", t)
             elif t.state != "occluded":
                 t.state = "occluded"
-                self._event(now, "occluded", f"lost sight of {self.name(t)} while looking at it (occluded or moved)", t)
+                self._event(now, "occluded", f"lost sight of {self.name(t)}", t)
         # 4) hidden objects travel with their container (azimuth and range; a lifted cup doesn't lift them)
         for t in self.tracks.values():
             if t.state != "hidden":
@@ -230,7 +230,7 @@ class ObjectMemory:
                         t.el = -math.degrees(math.asin(max(-1.0, min(1.0, t.drop_m / t.range_m))))
                 if abs(wrap180(c.az - t.anchor_az)) > 8.0:
                     t.anchor_az = c.az
-                    self._event(now, "carried", f"{self.name(c)} moved; hidden {self.name(t)} moves with it", t)
+                    self._event(now, "carried", f"{self.name(c)} moved — {self.name(t)} is still inside", t)
                 # how far the container rose above where it would sit at its current range
                 if t.cont_drop_m is not None and c.range_m:
                     ground_el = -math.degrees(math.asin(max(-1.0, min(1.0, t.cont_drop_m / c.range_m))))
@@ -241,12 +241,12 @@ class ObjectMemory:
                 if lift > max(2.5, c.h_deg * 0.8) and self._in_fov(t, cam_az, cam_el, half_h, half_v):
                     t.missed += 1
                     if t.missed >= self.miss_frames + 2:
-                        self._event(now, "not_there", f"{self.name(c)} was lifted but {self.name(t)} was not under it", t)
+                        self._event(now, "not_there", f"{self.name(c)} was lifted but {self.name(t)} wasn't under it", t)
                         t.state, t.contained_by, t.hidden_since = "occluded", None, None
         # 5) forget old memories
         for t in list(self.tracks.values()):
             if now - t.last_seen > self.ttl_s:
-                self._event(now, "forgot", f"forgot {self.name(t)} (not seen for {self.ttl_s:.0f} s)", t)
+                self._event(now, "forgot", f"forgot {self.name(t)} (not seen for {self.ttl_s / 60:.0f} min)", t)
                 del self.tracks[t.id]
                 for o in self.tracks.values():
                     if o.contained_by == t.id:
@@ -281,11 +281,11 @@ class ObjectMemory:
         t.missed = 0
         if was == "hidden":
             right = not snap
-            self._event(now, "revealed", f"{self.name(t)} revealed after {gone_s:.0f} s hidden under "
-                        f"{self.name(self.tracks.get(t.contained_by or -1))}"
-                        f"{': memory was right' if right else ''}", t)
+            self._event(now, "revealed", f"{self.name(t)} found under "
+                        f"{self.name(self.tracks.get(t.contained_by or -1))} after {gone_s:.0f} s"
+                        f"{' — memory was right' if right else ''}", t)
         elif was in ("occluded", "out_of_view") and gone_s > 2.0 and t.confirmed:
-            self._event(now, "reseen", f"{self.name(t)} seen again after {gone_s:.0f} s", t)
+            self._event(now, "reseen", f"{self.name(t)} is back in view after {gone_s:.0f} s", t)
         t.state, t.contained_by, t.hidden_since = "visible", None, None
 
     def _covering_container(self, t: Track) -> Track | None:
@@ -440,12 +440,12 @@ class MemoryService:
             rng = f"~{o['range_m']:.1f} m" if o["range_m"] is not None else "range unknown"
             where = f"az {o['az']:+.0f}°, el {o['el']:+.0f}°, {rng}"
             if o["memory"] == "seen":
-                lines.append(f"{o['name']}: SEEN now ({where})")
+                lines.append(f"{o['name']}: in view now ({where})")
             elif o["memory"] == "hidden":
-                lines.append(f"{o['name']}: HIDDEN under {o['contained_by_name']} for {o['hidden_for_s'] or 0:.0f} s ({where})")
+                lines.append(f"{o['name']}: hidden under {o['contained_by_name']} for {o['hidden_for_s'] or 0:.0f} s ({where})")
             else:
-                why = "camera pointed elsewhere" if o["state"] == "out_of_view" else "not detected where expected"
-                lines.append(f"{o['name']}: REMEMBERED, out of sight {o['out_of_sight_s']:.0f} s, {why} ({where})")
+                why = "the camera is pointed elsewhere" if o["state"] == "out_of_view" else "not detected where expected"
+                lines.append(f"{o['name']}: remembered, out of sight for {o['out_of_sight_s']:.0f} s, {why} ({where})")
         return lines
 
     def resolve(self, query: str) -> dict[str, Any] | None:
@@ -473,15 +473,13 @@ class MemoryService:
         yaw_delta = wrap180(info["az"] - cam_az)
         guidance = []
         if abs(yaw_delta) > 3:
-            guidance.append(f"Yaw {'right' if yaw_delta > 0 else 'left'} ~{abs(yaw_delta):.0f}° to face {info['name']}.")
+            guidance.append(f"Turn the drone {'right' if yaw_delta > 0 else 'left'} about {abs(yaw_delta):.0f}° to face it.")
         else:
-            guidance.append(f"The drone already faces {info['name']} (within 3°).")
+            guidance.append("The drone is already facing it.")
         if info["range_m"] is not None:
-            guidance.append(f"It is ~{info['range_m']:.1f} m away (estimate, ±30 %).")
-        if info["contained_by"]:
-            guidance.append(f"Remembered inside {info['contained_by']}, so the camera aims at that container.")
+            guidance.append(f"It's about {info['range_m']:.1f} m away.")
         if st.get("clamped"):
-            guidance.append(f"The servo limit stops the camera at {reached:+.0f}°; the target is at {tilt:+.0f}°.")
+            guidance.append(f"The camera can't tilt that far (stopped at {reached:+.0f}°, it's at {tilt:+.0f}°).")
         return {"target": info["name"], "id": info["id"], "state": info["state"], "contained_by": info["contained_by"],
                 "out_of_sight_s": round(info["out_of_sight_s"], 1), "tilt_deg": round(reached, 1),
                 "requested_tilt_deg": round(tilt, 1), "clamped": bool(st.get("clamped")),

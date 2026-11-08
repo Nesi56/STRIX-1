@@ -68,7 +68,11 @@ Then run `scripts/verify_all.sh` (stop STRIX-1 first so the camera is free) and 
 
 | Symptom | Check / fix |
 |---|---|
-| Commands rejected (409) | Control is disabled: press *Enable control*. It starts disabled after every restart unless `STRIX_SERVO_START_ARMED=true`. |
+| SERVO row red: "cannot open the GPIO chip" | Usually the systemd service: lgpio needs a writable working directory. Re-run `scripts/install_pi.sh --skip-apt --skip-frontend --systemd` (adds `LG_WD`), or check that your user is in the `gpio` group (`--groups`, then reboot). |
+| SERVO row red: "GPIO18 is already in use" | Remove any `dtoverlay=pwm…` line for GPIO18 from `/boot/firmware/config.txt` and reboot, or stop the other program using it. |
+| SERVO row red: "GPIO library missing" / "no GPIO driver" | `sudo apt install python3-gpiozero python3-lgpio`, then `scripts/install_pi.sh --skip-frontend` (the venv must use the system packages). |
+| SERVO row green but the servo doesn't move | The Pi can't sense an SG90 (no feedback wire), so "on" only means the signal is being sent. Check the wiring: orange → **pin 12 (GPIO18)**, red → 52Pi **+5V OUTPUT**, brown → 52Pi **GND**, and the 52Pi GND must be common with the Pi. Test with `backend/.venv/bin/python scripts/verify_servo.py`. |
+| "EMERGENCY STOP is active" | Press **Servo on** under the video (or **E**) to clear it. |
 | Servo jitters / hums | Software PWM jitter (gpiozero/lgpio): keep `STRIX_SERVO_DETACH_WHEN_IDLE=true` or switch to hardware PWM. A weak supply or missing common ground also causes jitter. |
 | Pi reboots / under-voltage when the servo moves | The servo is drawing from the Pi's supply. Use a separate regulated 5 V supply with common ground. |
 | Hits an end-stop | Narrow `STRIX_SERVO_MIN/MAX_ANGLE` (Calibration view) or adjust the pulse range. |
@@ -82,7 +86,7 @@ Then run `scripts/verify_all.sh` (stop STRIX-1 first so the camera is free) and 
 | Very slow answers | Lower `QWEN_CTX_SIZE` and `QWEN_MAX_TOKENS`, use a 3B Q4 model, reduce camera load, and keep `QWEN_THREADS=3`. |
 | Answer contains "command block removed" | The model produced a shell/command block. It was removed on purpose. |
 | Chat says "RULE PLAN" | Qwen was not ready (loading/unreachable) or returned unusable JSON, so the keyword planner was used. Check llama-server. |
-| Agent says "servo control is disabled" | Press **E** (or *Enable*) first. The agent only moves the camera after you enable it. |
+| Qwen says "EMERGENCY STOP is active" | An emergency stop latches the servo off. Press **Servo on** (under the video) or **E**. |
 | Camera tilts the wrong way | Set `STRIX_SERVO_UP_IS_POSITIVE=false` and restart. |
 | "agent is already running" (409) | Wait for the task or press **Esc** / *Stop*. |
 
@@ -99,11 +103,11 @@ Then run `scripts/verify_all.sh` (stop STRIX-1 first so the camera is free) and 
 
 | Symptom | Check / fix |
 |---|---|
-| Nothing appears in MEMORY | Only prompt classes plus containers (cup, bowl, vase, wine glass) are remembered, after 2 detections. Add the class in YOLO PROMPTS. |
+| Nothing appears in Memory | Only the YOLO targets (the row above the Qwen chat) plus containers (cup, bowl, vase, wine glass) are remembered, after 2 detections. Add the object there. |
 | Remembered objects slowly rotate around the drone | Relative yaw drifts until the IMU is calibrated: press **Calibrate** with the drone still and level. |
 | The ball isn't marked HIDDEN when covered | The cup must be detected as `cup` (or bowl/vase/wine glass) while the ball disappears behind it, so keep both in view. Real YOLO needs ≥ 2 detections/s; check the YOLO FPS. |
 | After shuffling, memory points at the wrong cup | Identical cups keep identity only through continuous tracking: shuffle slower (≈ 3 s per swap) or raise the detector rate. Lifting the right cup corrects the memory ("memory corrected" event). |
-| AIM / "where is the ball?" doesn't move the camera | Enable servo control (**E**). The servo only tilts: yaw the drone as the guidance says. |
+| AIM / "where is the ball?" doesn't move the camera | Check the SERVO row in Status. The servo only tilts: turn the drone as Qwen says. |
 
 ## Power / thermals
 

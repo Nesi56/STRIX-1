@@ -377,9 +377,16 @@ async def servo_angle(body: ServoAngleRequest, request: Request) -> dict[str, An
     return _servo_call(get_container(request).servo.set_target, body.angle)
 
 
+def _operator_move(c: Container, fn, *args):
+    """Tilt buttons / keys are operator actions: they enable servo control (unless an e-stop is latched)."""
+    _servo_call(c.servo.ensure_armed)
+    return _servo_call(fn, *args)
+
+
 @router.post("/servo/center")
 async def servo_center(request: Request) -> dict[str, Any]:
-    return _servo_call(get_container(request).servo.center)
+    c = get_container(request)
+    return _operator_move(c, c.servo.center)
 
 
 @router.post("/servo/arm")
@@ -394,7 +401,8 @@ async def servo_disarm(request: Request) -> dict[str, Any]:
 
 @router.post("/servo/nudge")
 async def servo_nudge(body: ServoNudgeRequest, request: Request) -> dict[str, Any]:
-    return _servo_call(get_container(request).servo.nudge, body.up_deg)
+    c = get_container(request)
+    return _operator_move(c, c.servo.nudge, body.up_deg)
 
 
 @router.post("/servo/speed")
@@ -413,7 +421,7 @@ async def servo_limits(body: ServoLimitsRequest, request: Request) -> dict[str, 
 async def emergency_stop(request: Request) -> dict[str, Any]:
     """Disable camera-servo control and cancel any running agent task."""
     c = get_container(request)
-    c.servo.disarm()
+    c.servo.emergency_stop()
     cancelled = c.agent.stop("EMERGENCY STOP")
     c.events.add("error", "operator", "EMERGENCY STOP: servo control disabled" + (", agent cancelled" if cancelled else ""))
     return {"servo": c.servo.state(), "agent": c.agent.snapshot(), "cancelled": cancelled}
@@ -476,6 +484,7 @@ async def memory_aim(body: MemoryAimRequest, request: Request) -> dict[str, Any]
     The aircraft is never moved."""
     c = get_container(request)
     try:
+        c.servo.ensure_armed()
         out = c.memory.aim_at(body.target)
     except KeyError as exc:
         raise err(404, "not_in_memory", str(exc.args[0])) from exc

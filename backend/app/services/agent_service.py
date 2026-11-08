@@ -149,6 +149,9 @@ def rule_plan(task: str, vocabulary: list[str], current_tilt: float = 0.0,
     return target, [], ""
 
 
+MOTION_SKILLS = {"look", "tilt", "center", "scan", "find", "track", "goto"}
+
+
 class AgentService:
     def __init__(self, c: Any) -> None:
         self.c = c
@@ -280,11 +283,10 @@ class AgentService:
                 target, raw, note = rule_plan(task, self.c.detector.vocabulary, self.c.servo.tilt_deg() or 0.0,
                                               self._remembered())
                 self._plan_note = note
-                return "rules", f"Qwen planning failed ({exc.code}); keyword planner used. {note}".strip(), target, self._validate_plan(raw), {}
+                return "rules", note, target, self._validate_plan(raw), {}
         target, raw, note = rule_plan(task, self.c.detector.vocabulary, self.c.servo.tilt_deg() or 0.0, self._remembered())
         self._plan_note = note
-        state = "not running (run scripts/setup_ai.sh)" if q.state == "unreachable" else q.state
-        return "rules", f"Qwen {state} — keyword planner used. {note}".strip(), target, self._validate_plan(raw), {}
+        return "rules", note, target, self._validate_plan(raw), {}
 
     def _remembered(self) -> list[str]:
         mem = getattr(self.c, "memory", None)
@@ -298,9 +300,10 @@ class AgentService:
         """Issue a servo command; returns an error string instead of raising."""
         sv = self.c.servo
         if not sv.state()["available"]:
-            return "camera servo unavailable"
+            return f"the camera servo isn't working ({sv.status.error or 'unavailable'})"
         if not sv.armed:
-            return "servo control is disabled — enable it (E key or toggle) to let Qwen move the camera"
+            return ("EMERGENCY STOP is active — press Enable servo to clear it" if sv.estop_latched
+                    else "the camera servo is turned off")
         try:
             fn(*args)
         except ServoError as exc:
@@ -338,20 +341,21 @@ class AgentService:
         if sk == "wait":
             yield self._node("until")
             await self._sleep(step["seconds"])
-            yield {"type": "result", "status": "done", "text": f"waited {step['seconds']:.1f} s"}
+            yield {"type": "result", "status": "done", "text": f"waited {step['seconds']:.0f} s"}
             return
         if sk in ("look", "tilt", "center"):
+            d = step.get("delta", 0.0)
             fn, args, label = {
-                "look": (sv.tilt_to, (step.get("tilt", 0.0),), f"tilt to {step.get('tilt', 0.0):+.0f}°"),
-                "tilt": (sv.nudge, (step.get("delta", 0.0),), f"tilt by {step.get('delta', 0.0):+.0f}°"),
-                "center": (sv.center, (), "level the camera"),
+                "look": (sv.tilt_to, (step.get("tilt", 0.0),), "pointed the camera"),
+                "tilt": (sv.nudge, (d,), f"tilted the camera {'up' if d >= 0 else 'down'} {abs(d):.0f}°"),
+                "center": (sv.center, (), "levelled the camera"),
             }[sk]
             yield self._node("until")
             err = await self._move(fn, *args)
             if err:
-                yield {"type": "result", "status": "skipped", "text": f"{label}: {err}"}
+                yield {"type": "result", "status": "skipped", "text": f"couldn't move the camera: {err}"}
             else:
-                yield {"type": "result", "status": "done", "text": f"{label} → tilt {sv.tilt_deg():+.0f}°"}
+                yield {"type": "result", "status": "done", "text": f"{label} (now {sv.tilt_deg():+.0f}°)"}
             return
         if sk in ("scan", "find"):
             target = step.get("target")
@@ -359,7 +363,7 @@ class AgentService:
                 hit = self.c.detector.find(target)
                 if hit:
                     yield {"type": "result", "status": "done", "found": True,
-                           "text": f"{target} already in view: {describe_detection(hit[0])}"}
+                           "text": f"the {target} is already in view: {describe_detection(hit[0])}"}
                     return
             seen: dict[str, tuple[float, dict[str, Any]]] = {}
             start_tilt = sv.tilt_deg() or 0.0
@@ -367,7 +371,7 @@ class AgentService:
                 yield self._node("pilot")
                 err = await self._move(sv.tilt_to, tilt)
                 if err:
-                    yield {"type": "result", "status": "skipped", "text": f"{sk}: {err}"}
+                    yield {"type": "result", "status": "skipped", "text": f"couldn't move the camera: {err}"}
                     return
                 yield self._node("until")
                 res = await self._fresh_detections(self._det_seq())
@@ -379,34 +383,33 @@ class AgentService:
                 if target and target in seen:
                     t, d = seen[target]
                     yield {"type": "result", "status": "done", "found": True,
-                           "text": f"found {target} at tilt {t:+.0f}°: {describe_detection(d)}"}
+                           "text": f"found the {target} with the camera at {t:+.0f}°: {describe_detection(d)}"}
                     return
             if target:
                 await self._move(sv.tilt_to, start_tilt)
-                yield {"type": "result", "status": "failed", "found": False, "text": f"{target} not found in the tilt range"}
+                yield {"type": "result", "status": "failed", "found": False, "text": f"couldn't find a {target} looking up and down"}
                 return
             best = max(seen.values(), key=lambda v: v[1]["confidence"], default=None)
             if best:
                 await self._move(sv.tilt_to, best[0])
             summary = "; ".join(f"{lab} at tilt {t:+.0f}°" for lab, (t, _) in sorted(seen.items())) or "no objects"
-            yield {"type": "result", "status": "done", "text": f"scan complete — {summary}"}
+            yield {"type": "result", "status": "done", "text": f"looked up and down: {summary}"}
             return
         if sk == "goto":
             yield self._node("pilot")
             mem = getattr(self.c, "memory", None)
             info = mem.resolve(step["target"]) if mem else None
             if info is None:
-                yield {"type": "result", "status": "failed", "text": f"goto: no {step['target']} in memory (it has not been seen yet)"}
+                yield {"type": "result", "status": "failed", "text": f"I don't remember any {step['target']} (I haven't seen one yet)"}
                 return
-            if not sv.state()["available"] or not sv.armed:
-                why = "camera servo unavailable" if not sv.state()["available"] else \
-                    "servo control is disabled — enable it (E key) to let Qwen aim the camera"
-                yield {"type": "result", "status": "skipped", "text": f"goto {info['name']}: {why}"}
+            err = None if (sv.state()["available"] and sv.armed) else await self._move(lambda: None)
+            if err:
+                yield {"type": "result", "status": "skipped", "text": f"couldn't aim at the {info['label']}: {err}"}
                 return
             try:
                 res = mem.aim_at(step["target"])
             except (KeyError, ServoError) as exc:
-                yield {"type": "result", "status": "skipped", "text": f"goto {info['name']}: {exc}"}
+                yield {"type": "result", "status": "skipped", "text": f"couldn't aim at the {info['label']}: {exc}"}
                 return
             yield self._node("until")
             t0 = time.monotonic()
@@ -414,17 +417,17 @@ class AgentService:
                 await self._sleep(POLL_S)
             await self._fresh_detections(self._det_seq(), timeout=1.5)
             now_info = mem.resolve(f"#{res['id']}") or info
-            state = {"visible": "SEEN now", "hidden": f"HIDDEN under {now_info['contained_by']}",
-                     "out_of_view": "not in view yet", "occluded": "not detected where remembered"}.get(now_info["state"], now_info["state"])
+            state = {"visible": "it's in view now", "hidden": f"it's still hidden under {now_info['contained_by']}",
+                     "out_of_view": "it isn't in view yet", "occluded": "I can't see it where I remembered it"}.get(now_info["state"], now_info["state"])
             yield {"type": "result", "status": "done", "found": now_info["state"] == "visible",
-                   "text": f"aimed camera at remembered {res['target']} (tilt {res['tilt_deg']:+.0f}°, out of sight "
-                           f"{res['out_of_sight_s']:.0f} s) → {state}. " + " ".join(res["guidance"])}
+                   "text": f"aimed the camera at the {info['label']} I remembered ({res['target']}, out of sight "
+                           f"{res['out_of_sight_s']:.0f} s): {state}. " + " ".join(res["guidance"])}
             return
         if sk == "track":
             target = step["target"]
             if not sv.armed or not sv.state()["available"]:
                 yield {"type": "result", "status": "skipped",
-                       "text": "track: servo control is disabled — enable it to let Qwen move the camera"}
+                       "text": f"couldn't follow the {target}: {await self._move(lambda: None) or 'the camera servo is turned off'}"}
                 return
             duration = step.get("seconds", 8.0)
             t0 = time.monotonic()
@@ -439,7 +442,7 @@ class AgentService:
                 cands = [d for d in (res or {}).get("detections", []) if d["label"] == target]
                 if not cands:
                     if time.monotonic() - last_seen > 3.0:
-                        yield {"type": "result", "status": "failed", "text": f"lost the {target} for >3 s"}
+                        yield {"type": "result", "status": "failed", "text": f"lost the {target} for more than 3 s"}
                         return
                     continue
                 last_seen = time.monotonic()
@@ -452,11 +455,11 @@ class AgentService:
                     try:
                         sv.tilt_to((sv.tilt_deg() or 0.0) + 0.7 * err)
                     except ServoError as exc:
-                        yield {"type": "result", "status": "skipped", "text": f"track: {exc}"}
+                        yield {"type": "result", "status": "skipped", "text": f"couldn't follow the {target}: {exc}"}
                         return
             pct = 100.0 * centered / frames if frames else 0.0
             yield {"type": "result", "status": "done",
-                   "text": f"tracked {target} for {duration:.0f} s — vertically centered in {pct:.0f}% of {frames} detections"}
+                   "text": f"kept the {target} centered for {duration:.0f} s ({pct:.0f}% of the time)"}
             return
         yield {"type": "result", "status": "skipped", "text": f"unknown skill {sk}"}
 
@@ -464,14 +467,14 @@ class AgentService:
     def describe_step(step: dict[str, Any]) -> str:
         sk = step["skill"]
         return {
-            "look": lambda: f"look at tilt {step.get('tilt', 0):+.0f}°",
-            "tilt": lambda: f"tilt camera {step.get('delta', 0):+.0f}°",
+            "look": lambda: f"point the camera to {step.get('tilt', 0):+.0f}°",
+            "tilt": lambda: f"tilt the camera {'up' if step.get('delta', 0) >= 0 else 'down'} {abs(step.get('delta', 0)):.0f}°",
             "center": lambda: "level the camera",
-            "scan": lambda: "scan the tilt range",
-            "find": lambda: f"find {step.get('target')}",
-            "track": lambda: f"track {step.get('target')} for {step.get('seconds', 8):.0f} s",
-            "goto": lambda: f"aim at remembered {step.get('target')}",
-            "wait": lambda: f"wait {step.get('seconds', 1):.1f} s",
+            "scan": lambda: "look up and down",
+            "find": lambda: f"look for the {step.get('target')}",
+            "track": lambda: f"follow the {step.get('target')} for {step.get('seconds', 8):.0f} s",
+            "goto": lambda: f"aim at the remembered {step.get('target')}",
+            "wait": lambda: f"wait {step.get('seconds', 1):.0f} s",
         }.get(sk, lambda: sk)()
 
     # ----------------------------------------------------------- vision
@@ -571,10 +574,9 @@ class AgentService:
         sugg = suggestions(obs, None, self.s.agent_standoff_m)
         provider, vision = "rules", False
         if mem_event:
-            tag = "[DETECTED]" if mem_event["kind"] == "revealed" else "[REMEMBERED]"
-            text = f"{tag} {mem_event['text'][0].upper()}{mem_event['text'][1:]}."
+            text = f"{mem_event['text'][0].upper()}{mem_event['text'][1:]}."
             if mem_event["kind"] == "hidden":
-                text += " I'll keep following that container — ask \"where is it?\" any time."
+                text += " I'll keep track of it — ask me \"where is it?\" any time."
         else:
             text = deterministic_watch(dets, sugg, bool(obs["synthetic"]))
         if self.c.qwen.state == "ready":
@@ -629,6 +631,14 @@ class AgentService:
             self.state["plan"] = [{**p, "text": self.describe_step(p), "status": "pending"} for p in plan]
             yield {"type": "plan", "planner": planner, "thought": thought, "target": target,
                    "steps": self.state["plan"], "stats": plan_stats}
+            # The operator's task is the request to move the camera: enable servo control for it
+            # (refused while an emergency stop is latched).
+            if any(p["skill"] in MOTION_SKILLS for p in plan) and not self.c.servo.armed:
+                try:
+                    if self.c.servo.ensure_armed():
+                        actions.append("turned on camera servo control for this task")
+                except ServoError as exc:
+                    actions.append(f"could not turn on the camera servo: {exc}")
             # ---------------- EXECUTION LOOP
             for i, step in enumerate(plan):
                 self._check()
@@ -669,8 +679,8 @@ class AgentService:
                                 + "\n\nPILOT SUGGESTIONS:\n" + ("\n".join(f"- {s}" for s in sugg) or "- none")
                                 + f"\n\nTASK: {task}")
                 if visual and not self.c.qwen.vision_capable:
-                    content_text += ("\n\nNOTE: this is a visual question but the loaded Qwen model is text-only — say "
-                                     "[UNAVAILABLE] for identification beyond the YOLO detections.")
+                    content_text += ("\n\nNOTE: this is a visual question but the loaded Qwen model is text-only — say that you "
+                                     "can only name the YOLO objects until the vision model is installed.")
                 content, vision_used = await self._user_content(content_text, visual)
                 yield {"type": "vision", "image_sent": vision_used, "vision_capable": self.c.qwen.vision_capable}
                 san = StreamingSanitizer()
@@ -697,7 +707,7 @@ class AgentService:
                 finally:
                     await gen.aclose()
             if provider == "rules":
-                text = deterministic_report(obs, task, actions, sugg, self._plan_note)
+                text = deterministic_report(obs, task, actions, sugg, self._plan_note, target or None)
                 yield {"type": "replace", "text": text}
             self._save("assistant", text, provider, {"run_id": run_id, "planner": planner, "plan": self.state["plan"],
                                                      "suggestions": sugg, "stats": stats, "thought": thought,

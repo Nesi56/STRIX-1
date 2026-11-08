@@ -96,6 +96,35 @@ def describe_detection(d: dict[str, Any]) -> str:
     return f"{d['label']} {d['confidence']:.2f}, {rng}, {side}{vert}"
 
 
+def say_detection(d: dict[str, Any]) -> str:
+    """Plain-language phrase for the operator, e.g. "sports ball about 0.6 m away, 22° to the left"."""
+    b, e = d["bearing_deg"], d["elevation_deg"]
+    side = "straight ahead" if abs(b) < 5 else f"{abs(b):.0f}° to the {'right' if b > 0 else 'left'}"
+    vert = "" if abs(e) < 8 else (", above the center" if e > 0 else ", below the center")
+    if d.get("distance_m") is None:
+        dist = ""
+    elif d.get("distance_kind") == "upper_bound":
+        dist = f" at most {d['distance_m']:.1f} m away"
+    else:
+        dist = f" about {d['distance_m']:.1f} m away"
+    return f"{d['label']}{dist}, {side}{vert}"
+
+
+def count_phrase(labels: list[str]) -> str:
+    """["cup", "cup", "sports ball"] → "2 cups and a sports ball"."""
+    from collections import Counter
+
+    parts = []
+    for lab, n in Counter(labels).items():
+        if n == 1:
+            parts.append(f"{'an' if lab[0] in 'aeiou' else 'a'} {lab}")
+        else:
+            parts.append(f"{n} {lab}{'' if lab.endswith('s') else 's'}")
+    if not parts:
+        return "nothing"
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
 def observation_text(o: dict[str, Any]) -> str:
     now = o["ts"]
     L = [f"OBSERVATION {datetime.fromtimestamp(now).strftime('%H:%M:%S')}"]
@@ -152,11 +181,10 @@ def suggestions(o: dict[str, Any], target: str | None, standoff_m: float) -> lis
                 m = max(mem, key=lambda m: m["last_seen"])
                 daz = (m["az"] - cam["az"] + 180) % 360 - 180
                 where = f"hidden under {m['contained_by_name']}" if m["memory"] == "hidden" else f"out of sight {m['out_of_sight_s']:.0f} s"
-                turn = f"yaw {'right' if daz > 0 else 'left'} ~{abs(daz):.0f}°" if abs(daz) > 5 else "the heading is already aligned"
-                out.append(f"The {target} is not in view but remembered ({m['name']}, {where}): {turn}; "
-                           "ask Qwen to go to it to aim the camera.")
+                turn = f"turn the drone {'right' if daz > 0 else 'left'} about {abs(daz):.0f}°" if abs(daz) > 5 else "the drone is already facing it"
+                out.append(f"I can't see the {target} right now, but I remember it ({where}): {turn}, or ask me to go to it.")
             else:
-                out.append(f"No {target} detected — rotate the drone slowly or run a camera scan; check lighting.")
+                out.append(f"I can't see a {target} — turn the drone slowly or ask me to look around.")
     elif dets:
         prompted = [d for d in dets if d["label"] in o["prompts"]] or dets
         with_range = [d for d in prompted if d.get("distance_m") is not None]
@@ -165,29 +193,28 @@ def suggestions(o: dict[str, Any], target: str | None, standoff_m: float) -> lis
         lab = pick["label"]
         b = pick["bearing_deg"]
         if abs(b) > 5:
-            out.append(f"Yaw {'right' if b > 0 else 'left'} ~{abs(b):.0f}° to bring the {lab} to the center of the frame.")
+            out.append(f"Turn the drone {'right' if b > 0 else 'left'} about {abs(b):.0f}° to center the {lab}.")
         else:
-            out.append(f"Heading is aligned with the {lab} (within 5°).")
+            out.append(f"The drone is facing the {lab}.")
         dist = pick.get("distance_m")
         if dist is not None and pick.get("distance_kind") == "upper_bound":
-            out.append(f"The {lab} is partly out of frame (range ≤ {dist:.1f} m) — tilt the camera to frame it before approaching.")
+            out.append(f"The {lab} is partly out of the picture — tilt the camera to see all of it.")
         elif dist is not None:
             if dist > standoff_m + 0.3:
-                out.append(f"Advance ~{dist - standoff_m:.1f} m to reach a {standoff_m:.1f} m standoff (estimated range {dist:.1f} m, ±30 %).")
+                out.append(f"Move about {dist - standoff_m:.1f} m closer to be {standoff_m:.1f} m away (it's about {dist:.1f} m away now).")
             else:
-                out.append(f"Within the {standoff_m:.1f} m standoff (~{dist:.1f} m) — hold position.")
+                out.append(f"You're close enough (about {dist:.1f} m) — hold position.")
         if abs(pick["elevation_deg"]) > 8 and not o["servo"]["armed"]:
-            out.append(f"Tilt the camera {'up' if pick['elevation_deg'] > 0 else 'down'} ~{abs(pick['elevation_deg']):.0f}° "
-                       "(enable servo control to let Qwen do it).")
+            out.append(f"Ask me to tilt the camera {'up' if pick['elevation_deg'] > 0 else 'down'} about {abs(pick['elevation_deg']):.0f}°.")
     i = o["imu"]
     if i and (abs(i["roll"]) > 20 or abs(i["pitch"]) > 20):
-        out.append(f"Level the airframe first (roll {i['roll']:+.0f}°, pitch {i['pitch']:+.0f}°).")
+        out.append(f"Level the drone first (it's tilted {max(abs(i['roll']), abs(i['pitch'])):.0f}°).")
     e = o["env"]
     if e and (e["temperature_c"] > 45 or e["temperature_c"] < 0):
-        out.append(f"Ambient {e['temperature_c']:.0f} °C is outside the comfortable range for the electronics.")
+        out.append(f"It's {e['temperature_c']:.0f} °C — too hot or cold for the electronics.")
     for w in o["system"]["warnings"]:
         if "VOLTAGE" in w.upper():
-            out.append("Power problem detected — land and check the supply before continuing.")
+            out.append("The power supply is too weak — land and check the battery.")
             break
     return out
 
@@ -247,24 +274,18 @@ PLAN_SCHEMA = {
     "additionalProperties": False,
 }
 
-REPORT_PROMPT = """You are STRIX-1's onboard assistant on a camera drone. The operator flies the drone; you only
-move the camera tilt servo (already done, see ACTION LOG) and give advice.
-Answer the TASK using ONLY the data provided (and the camera IMAGE if one is attached), in at most 7 short lines:
-- [SEEN] what you can identify in the attached camera image (objects, people, text, colours). Only if an image is attached.
-- [DETECTED] YOLO objects with estimated distance and direction (estimates are ±30 %).
-- [MEASURED] sensor values you rely on (IMU, DHT11) with their numbers.
-- [REMEMBERED] objects from MEMORY that are not in view: where they were, how long they have been out of sight,
-  and HIDDEN ones inside which container (e.g. "the ball is HIDDEN under cup #2 for 14 s").
-- What the camera did, from the ACTION LOG.
-- SUGGEST: lines with how to move or complete the task — reuse the PILOT SUGGESTIONS.
-Mark your own guesses [INTERPRETATION] and missing data [UNAVAILABLE]. If data is SYNTHETIC say so.
-Never invent positions, GPS, altitude or battery levels. No code, no shell commands."""
+REPORT_PROMPT = """You are Qwen, the co-pilot AI on a small camera drone. The pilot flies the drone; you can only tilt the
+camera (already done, see ACTION LOG) and give advice. Answer the TASK in 1-4 short, friendly, plain sentences, like
+talking to the pilot. No tags, no lists, no headings, no code.
+Use ONLY the data given (and the camera IMAGE if attached): what you see in the image, YOLO objects with distance and
+direction, MEMORY (objects out of sight or hidden under a cup, and for how long), sensor values when asked, what the
+camera did, and one tip from the PILOT SUGGESTIONS if useful. Say "about" for distances (they are estimates).
+Never invent positions, GPS, altitude or battery levels. If the data is SYNTHETIC, mention once that it's demo data."""
 
-WATCH_PROMPT = """You are the camera-operator AI of a small drone. The YOLO detector or the object MEMORY just reported
-an EVENT (new objects, or an object hidden under / revealed from a container, or found somewhere else).
-Reply in at most 2 short sentences: what happened (with estimated distance and direction; for memory events say which
-container hides what and for how long, tagged [REMEMBERED]) and one "SUGGEST:" line for the pilot. If a camera IMAGE is
-attached, add what you identify in it marked [SEEN]. Do not invent anything that is not in the data or the image. No code."""
+WATCH_PROMPT = """You are the co-pilot AI of a small camera drone. Something just changed (EVENT): YOLO saw new objects, or
+an object went under / came out from a cup. Tell the pilot in ONE short, friendly sentence what happened (with about how
+far and which way, or which cup and for how long). If a camera IMAGE is attached you may add what you see in it.
+Only use the data and the image. No tags, no code."""
 
 _VISUAL_RE = None
 
@@ -285,45 +306,69 @@ def is_visual(task: str) -> bool:
 
 
 def deterministic_watch(dets: list[dict[str, Any]], sugg: list[str], synthetic: bool) -> str:
-    """Rule-based announcement of new YOLO detections (used when Qwen is offline)."""
-    from collections import Counter
-
-    counts = Counter(d["label"] for d in dets)
-    what = ", ".join(f"{n}× {lab}" if n > 1 else lab for lab, n in counts.items())
+    """Plain one-line announcement of new YOLO detections (used when Qwen is offline)."""
     near = [d for d in dets if d.get("distance_m") is not None]
     lead = min(near, key=lambda d: d["distance_m"]) if near else (dets[0] if dets else None)
-    parts = [f"[DETECTED] YOLO sees {what}" + (" (synthetic demo)" if synthetic else "") + "."]
-    if lead:
-        parts.append(f"Nearest: {describe_detection(lead)}.")
-    if sugg:
-        parts.append(f"SUGGEST: {sugg[0]}")
-    return " ".join(parts)
+    text = f"I see {count_phrase([d['label'] for d in dets])}"
+    if lead and len(dets) > 1:
+        text += f" — the closest is the {say_detection(lead)}"
+    elif lead:
+        text = f"I see a {say_detection(lead)}"
+    return text + "." + (" (demo data)" if synthetic else "")
 
 
-def deterministic_report(o: dict[str, Any], task: str, actions: list[str], sugg: list[str], note: str = "") -> str:
-    lines = ["**Telemetry report** (rule-based — Qwen offline)."]
+ENV_WORDS = r"temp|humid|warm|cold|hot|weather|environment|dht"
+IMU_WORDS = r"imu|level|roll|pitch|yaw|attitude|orientation|tilted|mpu"
+SENSOR_WORDS = ENV_WORDS + "|" + IMU_WORDS
+
+
+def _asks(task: str, words: str) -> bool:
+    import re
+
+    return bool(re.search(words, task, re.IGNORECASE))
+
+
+def deterministic_report(o: dict[str, Any], task: str, actions: list[str], sugg: list[str], note: str = "",
+                         target: str | None = None) -> str:
+    """Short plain-language answer built from the data when Qwen is offline."""
+    out: list[str] = []
     if note:
-        lines.append(f"- {note}")
-    if o["synthetic"]:
-        lines.append(f"- ⚠ SYNTHETIC DEMO DATA ({', '.join(o['synthetic'])})")
-    i = o["imu"]
-    if i:
-        lines.append(f"- [MEASURED] roll {i['roll']:+.1f}°, pitch {i['pitch']:+.1f}°, relative yaw {i['yaw_rel']:+.1f}°")
-    e = o["env"]
-    if e:
-        lines.append(f"- [MEASURED] {e['temperature_c']:.1f} °C, {e['humidity_pct']:.0f} %RH")
-    for d in o["detections"][:4]:
-        lines.append(f"- [DETECTED] {describe_detection(d)}")
-    if not o["detections"]:
-        lines.append("- [DETECTED] no objects in view")
-    for line in (o.get("memory") or {}).get("lines", []):
-        if ": SEEN now" not in line:
-            lines.append(f"- [REMEMBERED] {line}")
-    for a in actions:
-        lines.append(f"- Camera: {a}")
+        out.append(note)
+    out.extend(a[0].upper() + a[1:] + ("" if a.endswith(".") else ".") for a in actions if a)
+    did_goto = any("I remembered" in a for a in actions)
+    dets = o["detections"]
+    if target:
+        hits = [d for d in dets if d["label"] == target]
+        if hits and not did_goto:
+            out.append(f"The {say_detection(hits[0])}.")
+        elif not hits and not did_goto:
+            mem = [m for m in (o.get("memory") or {}).get("objects", []) if m["label"] == target]
+            if mem:
+                m = mem[0]
+                where = f"hidden under {m['contained_by_name']}" if m["memory"] == "hidden" else f"out of sight for {m['out_of_sight_s']:.0f} s"
+                out.append(f"I can't see the {target} now, but I remember it ({where}).")
+            else:
+                out.append(f"I don't see a {target}.")
+    elif (not actions and not _asks(task, SENSOR_WORDS)) or is_visual(task) or _asks(task, r"\b(see|there|around|objects?|anything)\b"):
+        if dets:
+            near = [d for d in dets if d.get("distance_m") is not None]
+            lead = min(near, key=lambda d: d["distance_m"]) if near else dets[0]
+            out.append(f"I see {count_phrase([d['label'] for d in dets])}; the closest is the {say_detection(lead)}.")
+        else:
+            out.append("I don't see anything right now.")
+        hidden = [m for m in (o.get("memory") or {}).get("objects", []) if m["memory"] == "hidden"]
+        for m in hidden[:2]:
+            out.append(f"I also remember a {m['label']} hidden under {m['contained_by_name']}.")
+    i, e = o["imu"], o["env"]
+    if e and _asks(task, ENV_WORDS):
+        out.append(f"It's {e['temperature_c']:.1f} °C with {e['humidity_pct']:.0f} % humidity.")
+    if i and _asks(task, IMU_WORDS):
+        out.append(f"The drone is at roll {i['roll']:+.0f}°, pitch {i['pitch']:+.0f}°.")
     if is_visual(task):
-        lines.append("- [UNAVAILABLE] Identifying things beyond YOLO's object classes needs the Qwen vision model "
-                     "(run scripts/setup_ai.sh on the Pi).")
-    for s in sugg:
-        lines.append(f"- SUGGEST: {s}")
-    return "\n".join(lines)
+        out.append("To describe the picture itself I need the Qwen vision model (scripts/setup_ai.sh).")
+    tip = next((t for t in sugg if not (did_goto and "remember" in t)), None)
+    if tip and (target or not actions):
+        out.append(f"Tip: {tip}")
+    if o["synthetic"]:
+        out.append("(demo data)")
+    return " ".join(out)

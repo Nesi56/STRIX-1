@@ -239,10 +239,12 @@ def test_memory_api_and_demo_scene(cups_client):
     assert ball["range_m"] == pytest.approx(0.58, rel=0.3)  # synthetic table-top ball sized correctly
     assert set(m["camera"]) == {"az", "el", "half_h", "half_v"}
     assert "assumes the drone holds position" in m["frame"].lower()
-    # aiming needs servo control
+    # AIM is an operator action: it turns servo control on, unless an emergency stop is latched
+    c.post("/api/estop")
     assert c.post("/api/memory/aim", json={"target": "sports ball"}).status_code == 409
-    assert c.post("/api/memory/aim", json={"target": "giraffe"}).status_code == 404
     c.post("/api/servo/arm")
+    assert c.post("/api/memory/aim", json={"target": "giraffe"}).status_code == 404
+    c.post("/api/servo/disarm")
     r = c.post("/api/memory/aim", json={"target": "sports ball"})
     assert r.status_code == 200, r.text
     body = r.json()
@@ -269,11 +271,11 @@ def test_agent_goes_to_remembered_ball(cups_client):
     r = c.post("/api/agent/run", json={"task": "where is the ball?"})
     events = [json.loads(line) for line in r.text.splitlines() if line.strip()]
     plan = next(e for e in events if e["type"] == "plan")
-    assert plan["steps"][0]["text"] == "aim at remembered sports ball"
+    assert plan["steps"][0]["text"] == "aim at the remembered sports ball"
     step = [e for e in events if e["type"] == "step" and e["status"] != "running"][-1]
-    assert step["status"] == "done" and "aimed camera at remembered sports ball" in step["text"]
+    assert step["status"] == "done" and "aimed the camera at the sports ball I remembered" in step["text"]
     final = next(e for e in events if e["type"] == "replace")["text"]
-    assert "[REMEMBERED]" in final or "[DETECTED]" in final
+    assert "sports ball" in final and "[" not in final
 
 
 def test_cut_off_boxes_do_not_corrupt_range_or_position():

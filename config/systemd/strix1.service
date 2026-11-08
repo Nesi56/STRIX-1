@@ -12,6 +12,8 @@ Group=__USER__
 SupplementaryGroups=video i2c gpio
 WorkingDirectory=__REPO__/backend
 # Settings are read from __REPO__/.env by the application itself.
+# lgpio (GPIO on the Pi 5) needs a writable working directory; backend/ is read-only below.
+Environment=LG_WD=__REPO__/data/lgpio
 ExecStart=__REPO__/backend/.venv/bin/python -m app.main
 Restart=on-failure
 RestartSec=3

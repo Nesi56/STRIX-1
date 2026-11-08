@@ -1,8 +1,9 @@
-import { Camera, Circle, Expand, RefreshCw, Square, Video } from "lucide-react";
+import { Camera, ChevronDown, ChevronUp, Circle, Crosshair, Expand, Power } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useMjpeg } from "../../hooks/useMjpeg";
 import { telemetry, useTelemetry } from "../../hooks/useTelemetry";
 import { MEM_COLOR, stateText } from "../../lib/memory";
+import { servoAction } from "../../hooks/useServoKeys";
 import { errorMessage, post } from "../../services/api";
 import { fmtDuration } from "../../lib/format";
 import type { DetectedObject, MemoryState } from "../../types/telemetry";
@@ -98,11 +99,9 @@ export function VideoFeed() {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const overlay = useRef<HTMLCanvasElement>(null);
-  const [maxFps, setMaxFps] = useState(0);
-  const [key, setKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const available = !!cam?.available;
-  const m = useMjpeg(canvas, available, maxFps, key);
+  const m = useMjpeg(canvas, available, 0, 0);
 
   useEffect(() => {
     const o = overlay.current;
@@ -120,20 +119,18 @@ export function VideoFeed() {
     }
   }, [det, mem, cam?.width, cam?.height, m.frames]);
 
-  const act = async (fn: () => Promise<unknown>, ok?: string) => {
+  const rec = cam?.recording;
+  const aspect = `${cam?.width ?? 16}/${cam?.height ?? 9}`;
+  const snapshot = async () => {
     setBusy(true);
     try {
-      await fn();
-      if (ok) toast(ok, "ok");
+      toast(`Snapshot saved: ${(await post<{ id: string }>("/api/camera/snapshot")).id}`, "ok");
     } catch (e) {
       toast(errorMessage(e), "error");
     } finally {
       setBusy(false);
     }
   };
-  const rec = cam?.recording;
-  const prompts = det?.prompts ?? st?.detector?.prompts ?? [];
-  const aspect = `${cam?.width ?? 16}/${cam?.height ?? 9}`;
 
   return (
     <section ref={wrap} className="panel relative flex h-full min-h-[240px] items-center justify-center overflow-hidden !rounded-[4px] bg-black">
@@ -154,30 +151,46 @@ export function VideoFeed() {
         </span>
         {rec?.active && <span className="rounded-[3px] bg-crit/20 px-1.5 py-0.5 text-crit"><Circle size={8} className="blink inline fill-current" /> REC {fmtDuration(rec.duration_s)}</span>}
       </div>
-      <div className="absolute right-2 top-2 hidden rounded-[3px] bg-black/60 px-2 py-1 text-right text-[10.5px] leading-tight sm:block">
-        <div><span className="text-muted">RX</span> {m.fps} fps · <span className="text-muted">CAM</span> {(cam?.measured_fps ?? 0).toFixed(0)} fps</div>
-        <div><span className="text-muted">LAT</span> {m.latencyMs == null ? "—" : `${m.latencyMs.toFixed(0)} ms`} · {(m.kbps / 1000).toFixed(1)} Mb/s</div>
-        <div><span className="text-muted">YOLO</span> {st?.detector ? `${st.detector.fps.toFixed(1)} fps` : "—"}</div>
+      <div className="absolute right-2 top-2 hidden rounded-[3px] bg-black/60 px-2 py-0.5 text-[10.5px] sm:block" title="frames per second received · camera-to-screen delay">
+        {m.fps} fps · {m.latencyMs == null ? "—" : `${m.latencyMs.toFixed(0)} ms`}
       </div>
       {m.error && available && <div className="absolute left-2 top-9 rounded bg-black/70 px-2 py-1 text-[11px] text-warn">{m.error} — reconnecting…</div>}
-      <div className="absolute bottom-2 left-2 max-w-[48%] truncate rounded-[3px] border border-line-2 bg-black/75 px-2 py-1 text-[10.5px] font-semibold tracking-wider text-text sm:max-w-[60%] sm:text-[12px]">
-        &gt;&gt; PROMPTS: {prompts.length ? prompts.join(", ").toUpperCase() : "ALL"}
-        {det && <span className="ml-2 font-normal text-accent">{det.detections.length} detected</span>}
-      </div>
+      <ServoStrip />
       <div className="absolute bottom-2 right-2 flex gap-1">
-        <button className="btn btn-sm !bg-black/70" title="Snapshot" disabled={!available || busy}
-          onClick={() => void act(async () => toast(`Snapshot saved: ${(await post<{ id: string }>("/api/camera/snapshot")).id}`, "ok"))}><Camera size={12} /></button>
-        <button className={`btn btn-sm !bg-black/70 ${rec?.active ? "!text-crit" : ""}`} title={rec?.active ? "Stop recording" : "Record video"} disabled={!available || busy}
-          onClick={() => void act(() => post(rec?.active ? "/api/camera/recording/stop" : "/api/camera/recording/start"), rec?.active ? "Recording saved" : "Recording started")}>
-          {rec?.active ? <Square size={11} /> : <Video size={12} />}
-        </button>
-        <select className="select !bg-black/70 !py-0.5 text-[10.5px]" value={maxFps} onChange={(e) => setMaxFps(Number(e.target.value))} title="Limit stream rate to save Wi-Fi bandwidth">
-          <option value={0}>full</option><option value={15}>15 fps</option><option value={10}>10 fps</option><option value={5}>5 fps</option>
-        </select>
-        <button className="btn btn-sm !bg-black/70" title="Reconnect stream" onClick={() => setKey((k) => k + 1)}><RefreshCw size={11} /></button>
+        <button className="btn btn-sm !bg-black/70" title="Snapshot" disabled={!available || busy} onClick={() => void snapshot()}><Camera size={12} /></button>
         <button className="btn btn-sm !bg-black/70" title="Fullscreen"
           onClick={() => (document.fullscreenElement ? void document.exitFullscreen() : void wrap.current?.requestFullscreen?.())}><Expand size={12} /></button>
       </div>
     </section>
+  );
+}
+
+/** Camera tilt servo on the video: on/off, up, down, level. Keys: W/S/C, E on/off, Space = emergency stop. */
+function ServoStrip() {
+  const st = useTelemetry();
+  const sv = st?.servo;
+  const toast = useToast();
+  const pin = sv ? `GPIO${sv.gpio}${sv.pin ? ` · pin ${sv.pin}` : ""}` : "";
+  if (!sv) return null;
+  if (!sv.available) {
+    return (
+      <div className="absolute bottom-2 left-2 max-w-[70%] rounded-[3px] border border-crit/50 bg-black/80 px-2 py-1 text-[10.5px] text-crit" title={sv.status.error ?? ""}>
+        Camera servo not working ({pin}): {sv.status.error ?? "unavailable"}
+        <button className="ml-2 underline" onClick={() => void servoAction("toggle", toast)}>retry</button>
+      </div>
+    );
+  }
+  const latched = !!sv.estop_latched;
+  return (
+    <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded-[3px] border border-line-2 bg-black/75 px-1.5 py-1 text-[11px]"
+      title={`Camera tilt servo on ${pin}. Keys: W up · S down · C level · E on/off · Space emergency stop`}>
+      <button className={`btn btn-sm ${latched ? "btn-danger" : sv.armed ? "btn-primary" : ""}`} onClick={() => void servoAction("toggle", toast)}>
+        <Power size={11} /> {latched ? "E-STOP · tap to clear" : sv.armed ? "Servo on" : "Servo off"}
+      </button>
+      <button className="btn btn-sm" title="Tilt up (W)" disabled={latched} onClick={() => void servoAction("up", toast)}><ChevronUp size={13} /></button>
+      <button className="btn btn-sm" title="Tilt down (S)" disabled={latched} onClick={() => void servoAction("down", toast)}><ChevronDown size={13} /></button>
+      <button className="btn btn-sm" title="Level (C)" disabled={latched} onClick={() => void servoAction("center", toast)}><Crosshair size={12} /></button>
+      <span className="w-10 text-right tabular-nums text-text">{sv.tilt_deg == null ? "—" : `${sv.tilt_deg >= 0 ? "+" : ""}${sv.tilt_deg.toFixed(0)}°`}</span>
+    </div>
   );
 }

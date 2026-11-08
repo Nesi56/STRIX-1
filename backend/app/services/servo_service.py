@@ -8,8 +8,10 @@ Scope and safety
   inside the 0–180° mechanical range.
 * Motion is slew-rate limited (``STRIX_SERVO_MAX_SPEED_DPS``) by an internal
   50 Hz trajectory loop, so slider jumps become smooth moves.
-* Control starts **disarmed** unless ``STRIX_SERVO_START_ARMED=true``; the
-  operator can disarm at any time, which stops motion and releases the pulse.
+* Control starts **disarmed** unless ``STRIX_SERVO_START_ARMED=true``. An operator
+  action (a task for Qwen, AIM, the tilt buttons) enables it. EMERGENCY STOP
+  disables it and *latches*: nothing re-enables it until the operator presses
+  Enable again.
 * The SG90 has no position feedback: the reported angle is the *commanded*
   output, not a measurement. Because the true start position is unknown, the
   very first move after arming cannot be rate limited by software.
@@ -43,6 +45,27 @@ class ServoError(RuntimeError):
     pass
 
 
+# BCM GPIO → physical header pin (40-pin header), for messages the operator can match to the wiring.
+BCM_TO_PIN = {2: 3, 3: 5, 4: 7, 17: 11, 27: 13, 22: 15, 10: 19, 9: 21, 11: 23, 0: 27, 5: 29, 6: 31, 13: 33, 19: 35,
+              26: 37, 14: 8, 15: 10, 18: 12, 23: 16, 24: 18, 25: 22, 8: 24, 7: 26, 1: 28, 12: 32, 16: 36, 20: 38, 21: 40}
+
+
+def explain_gpio_error(exc: BaseException, gpio: int) -> str:
+    """Turn a gpiozero/lgpio exception into a short fix the operator can act on."""
+    msg = str(exc) or exc.__class__.__name__
+    low = msg.lower()
+    if isinstance(exc, ImportError) or "no module named" in low:
+        return "GPIO library missing: sudo apt install python3-gpiozero python3-lgpio, then re-run scripts/install_pi.sh"
+    if "pin factory" in low or "badpinfactory" in exc.__class__.__name__.lower():
+        return "no GPIO driver for this Pi: sudo apt install python3-lgpio, then re-run scripts/install_pi.sh"
+    if "busy" in low:
+        return (f"GPIO{gpio} is already in use (another program, or a dtoverlay=pwm line in "
+                "/boot/firmware/config.txt). Remove it and reboot")
+    if "gpiochip" in low or "permission" in low or "denied" in low:
+        return "cannot open the GPIO chip: run scripts/install_pi.sh --groups, then reboot"
+    return msg
+
+
 def angle_to_pulse_us(angle: float, min_pulse_us: int, max_pulse_us: int) -> float:
     angle = max(HW_MIN_ANGLE, min(HW_MAX_ANGLE, angle))
     return min_pulse_us + (max_pulse_us - min_pulse_us) * (angle / HW_MAX_ANGLE)
@@ -70,6 +93,20 @@ class ServoBackend(Protocol):
     def close(self) -> None: ...
 
 
+def prepare_lgpio_workdir(settings: Settings) -> None:
+    """lgpio (gpiozero's driver on the Pi 5) writes notification files into its working directory.
+    Under the hardened systemd unit the code directory is read-only, so opening the GPIO chip fails
+    ("can not open gpiochip"). Point it at the writable data directory instead (``LG_WD``)."""
+    import os
+
+    wd = settings.data_dir / "lgpio"
+    try:
+        wd.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("LG_WD", str(wd))
+    except OSError:
+        pass
+
+
 class GpiozeroServoBackend:
     """gpiozero ``Servo`` (lgpio pin factory on Pi 5: software-timed PWM, some jitter)."""
 
@@ -77,6 +114,7 @@ class GpiozeroServoBackend:
     synthetic = False
 
     def __init__(self, settings: Settings) -> None:
+        prepare_lgpio_workdir(settings)
         from gpiozero import Servo  # type: ignore[import-not-found]
 
         self._min = settings.servo_min_pulse_us / 1e6
@@ -189,6 +227,7 @@ class ServoService:
         self.max_speed_dps = settings.servo_max_speed_dps
         self._load_overrides()
         self.armed = False
+        self.estop_latched = False
         self.target: float | None = None
         self.current: float | None = None  # commanded output angle (no feedback)
         self._attached = False
@@ -259,21 +298,30 @@ class ServoService:
                 self.status.backend, self.status.synthetic = b.name, False
                 return b
             except Exception as exc:
-                errors.append(f"{c}: {exc}")
+                errors.append(explain_gpio_error(exc, self.settings.servo_gpio) if c != "hardware_pwm" else f"{c}: {exc}")
         self.status.backend = mode
-        self.status.set(DeviceState.DISCONNECTED, "; ".join(errors))
+        pin = BCM_TO_PIN.get(self.settings.servo_gpio)
+        where = f"GPIO{self.settings.servo_gpio}" + (f" (pin {pin})" if pin else "")
+        self.status.set(DeviceState.DISCONNECTED, f"{where}: " + "; ".join(errors))
         log.warning("servo unavailable: %s", "; ".join(errors))
         return None
 
     def start(self) -> None:
+        self._open()
+        if self._backend is not None and self.settings.servo_start_armed:
+            self.arm()
+
+    def _open(self) -> bool:
+        """Create the output backend (again, if it failed before) and start the trajectory loop."""
+        if self._backend is not None:
+            return True
         self._backend = self._make_backend()
         if self._backend is None:
-            return
+            return False
         self.status.set(DeviceState.SYNTHETIC if self.status.synthetic else DeviceState.OK)
         self._thread = StoppableThread(self._run, "servo-trajectory")
         self._thread.start()
-        if self.settings.servo_start_armed:
-            self.arm()
+        return True
 
     def stop(self) -> None:
         if self._thread:
@@ -286,8 +334,10 @@ class ServoService:
 
     # ----------------------------------------------------------- control
     def arm(self) -> dict[str, Any]:
-        if self._backend is None:
+        """Explicit operator enable (button / E key). Also clears an emergency-stop latch."""
+        if self._backend is None and not self._open():  # retry: the operator may have fixed wiring/permissions
             raise ServoError(self.status.error or "servo backend unavailable")
+        self.estop_latched = False
         with self._lock:
             if not self.armed:
                 self.armed = True
@@ -298,6 +348,22 @@ class ServoService:
                     self._write(self.current)
         self.events.add("info", "servo", "camera servo control ENABLED")
         return self.state()
+
+    def ensure_armed(self) -> bool:
+        """Enable control for an operator action (task, AIM, tilt button). Returns True if it was just enabled.
+        Refuses while an emergency stop is latched."""
+        if self.armed:
+            return False
+        if self.estop_latched:
+            raise ServoError("EMERGENCY STOP is active — press Enable servo to clear it")
+        self.arm()
+        return True
+
+    def emergency_stop(self) -> dict[str, Any]:
+        st = self.disarm()
+        self.estop_latched = True
+        st["estop_latched"] = True
+        return st
 
     def disarm(self) -> dict[str, Any]:
         with self._lock:
@@ -405,6 +471,8 @@ class ServoService:
             },
             "pulse_range_us": [self.settings.servo_min_pulse_us, self.settings.servo_max_pulse_us],
             "gpio": self.settings.servo_gpio,
+            "pin": BCM_TO_PIN.get(self.settings.servo_gpio),
+            "estop_latched": self.estop_latched,
             "position_feedback": False,
             "tilt_deg": self.tilt_deg(),
             "up_is_positive": self.settings.servo_up_is_positive,

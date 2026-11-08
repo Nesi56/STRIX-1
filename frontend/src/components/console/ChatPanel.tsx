@@ -1,35 +1,21 @@
-import { Bot, Check, Copy, Eye, Loader2, Minus, ScanSearch, Send, Square, Trash2, X } from "lucide-react";
+import { Bot, Check, Copy, Eye, Loader2, Minus, Plus, ScanSearch, Send, Square, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { telemetry, useTelemetry } from "../../hooks/useTelemetry";
 import { del, errorMessage, get, post, streamNdjson } from "../../services/api";
-import type { AIStats, PlanStep } from "../../types/telemetry";
+import type { PlanStep } from "../../types/telemetry";
 import { copyText, RichText } from "../common/RichText";
 import { useToast } from "../common/toast";
-import { ConsolePanel } from "./ConsolePanel";
+import { RecordingsTab } from "./RecordingsTab";
 
-const QUICK = [
-  "Identify what you see",
-  "Move the servo up",
-  "Find the person and keep them centered",
-  "How far away is the person and how should I move?",
-  "Scan the area",
-  "What are the temperature and humidity?",
-];
+const QUICK = ["What do you see?", "Where is the ball?", "Look up", "Follow the person", "How warm is it?"];
 
 interface Turn {
   id: string;
   role: "user" | "agent";
   text: string;
-  planner?: string | null;
-  thought?: string;
   steps?: PlanStep[];
-  progress?: string[];
-  suggestions?: string[];
   status?: "running" | "done" | "stopped" | "error";
   error?: string;
-  stats?: AIStats;
-  reporter?: string;
-  totalMs?: number;
   auto?: boolean;
   vision?: boolean;
 }
@@ -44,9 +30,60 @@ function StepIcon({ s }: { s: PlanStep["status"] }) {
   return <span className="inline-block h-2 w-2 rounded-full border border-dim" />;
 }
 
-export function ChatPanel() {
+/** What YOLO looks for — edited right where you talk to Qwen. */
+function YoloTargets() {
   const st = useTelemetry();
-  const qwen = st?.ai?.qwen;
+  const toast = useToast();
+  const [classes, setClasses] = useState<string[]>([]);
+  const [input, setInput] = useState("");
+  const [adding, setAdding] = useState(false);
+  const prompts = st?.detector?.prompts ?? st?.detections?.prompts ?? [];
+  const found = st?.detections?.detections.length ?? 0;
+
+  useEffect(() => {
+    get<{ classes: string[] }>("/api/detector/classes").then((r) => setClasses(r.classes)).catch(() => {});
+  }, [st?.detector?.engine]);
+
+  const save = async (next: string[]) => {
+    try {
+      await post("/api/detector/prompts", { prompts: next });
+    } catch (e) {
+      toast(errorMessage(e), "error");
+    }
+  };
+  const add = async () => {
+    const items = input.split(",").map((s) => s.trim()).filter(Boolean);
+    if (items.length) await save([...prompts, ...items]);
+    setInput("");
+    setAdding(false);
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 border-b border-line px-2.5 py-1.5 text-[11px]">
+      <span className="mr-0.5 text-[10px] tracking-[0.12em] text-muted">YOLO LOOKS FOR</span>
+      {prompts.map((p) => (
+        <span key={p} className="inline-flex items-center gap-1 rounded-[3px] border border-line-2 bg-[#1a201c] px-1.5 py-[1px]">
+          {p}
+          <button aria-label={`stop looking for ${p}`} className="text-muted hover:text-crit" onClick={() => void save(prompts.filter((x) => x !== p))}><X size={10} /></button>
+        </span>
+      ))}
+      {adding ? (
+        <form className="flex" onSubmit={(e) => { e.preventDefault(); void add(); }}>
+          <input autoFocus className="input !py-0 w-28 text-[11px]" list="strix-classes" placeholder="e.g. dog" value={input}
+            onChange={(e) => setInput(e.target.value)} onBlur={() => !input.trim() && setAdding(false)} aria-label="Object for YOLO to look for" />
+          <datalist id="strix-classes">{classes.map((c) => <option key={c} value={c} />)}</datalist>
+        </form>
+      ) : (
+        <button className="rounded-[3px] border border-dashed border-line-2 px-1.5 py-[1px] text-muted hover:text-text" onClick={() => setAdding(true)} title="Add an object">
+          <Plus size={10} className="inline" />
+        </button>
+      )}
+      <span className="ml-auto text-[10px] text-accent">{found} in view</span>
+    </div>
+  );
+}
+
+function Chat() {
   const toast = useToast();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -58,17 +95,13 @@ export function ChatPanel() {
     get<HistoryRow[]>("/api/agent/history?limit=40").then((rows) => {
       setTurns(rows.map((r) => r.role === "user"
         ? { id: `h${r.id}`, role: "user" as const, text: r.content }
-        : { id: `h${r.id}`, role: "agent" as const, text: r.content, planner: (r.meta.planner as string) ?? null,
-            steps: (r.meta.plan as PlanStep[]) ?? [], suggestions: (r.meta.suggestions as string[]) ?? [],
-            thought: r.meta.thought as string, status: "done" as const, reporter: r.provider ?? undefined,
-            stats: r.meta.stats as AIStats, auto: !!r.meta.auto, vision: !!r.meta.vision }));
+        : { id: `h${r.id}`, role: "agent" as const, text: r.content, steps: (r.meta.plan as PlanStep[]) ?? [],
+            status: "done" as const, auto: !!r.meta.auto, vision: !!r.meta.vision }));
     }).catch(() => {});
     const onReset = () => setTurns([]);
     window.addEventListener("strix:reset", onReset);
-    // Qwen's automatic comments on new YOLO detections arrive over the WebSocket.
-    const off = telemetry.onChat((m) => setTurns((ts) => [...ts, {
-      id: `w${m.id}`, role: "agent", text: m.text, auto: true, reporter: m.provider, vision: m.vision, status: "done",
-    }]));
+    // Qwen speaks up by itself (new objects, a ball going under a cup, …) over the WebSocket.
+    const off = telemetry.onChat((m) => setTurns((ts) => [...ts, { id: `w${m.id}`, role: "agent", text: m.text, auto: true, vision: m.vision, status: "done" }]));
     return () => {
       window.removeEventListener("strix:reset", onReset);
       off();
@@ -85,8 +118,7 @@ export function ChatPanel() {
     const t = task.trim();
     if (!t || busy) return;
     const id = `a${Date.now()}`;
-    setTurns((ts) => [...ts, { id: `u${Date.now()}`, role: "user", text: t },
-      { id, role: "agent", text: "", steps: [], progress: [], suggestions: [], status: "running" }]);
+    setTurns((ts) => [...ts, { id: `u${Date.now()}`, role: "user", text: t }, { id, role: "agent", text: "", steps: [], status: "running" }]);
     setInput("");
     setBusy(true);
     const ac = new AbortController();
@@ -95,16 +127,10 @@ export function ChatPanel() {
       for await (const ev of streamNdjson<Record<string, unknown>>("/api/agent/run", { task: t }, ac.signal)) {
         switch (ev.type) {
           case "plan":
-            update(id, (x) => ({ ...x, planner: ev.planner as string, thought: ev.thought as string, steps: ev.steps as PlanStep[] }));
+            update(id, (x) => ({ ...x, steps: ev.steps as PlanStep[] }));
             break;
           case "step":
-            update(id, (x) => ({ ...x, steps: (x.steps ?? []).map((s, i) => (i === ev.index ? { ...s, status: ev.status as PlanStep["status"], result: ev.status === "running" ? undefined : (ev.text as string) } : s)) }));
-            break;
-          case "progress":
-            update(id, (x) => ({ ...x, progress: [...(x.progress ?? []), ev.text as string].slice(-6) }));
-            break;
-          case "suggestions":
-            update(id, (x) => ({ ...x, suggestions: ev.items as string[] }));
+            update(id, (x) => ({ ...x, steps: (x.steps ?? []).map((s, i) => (i === ev.index ? { ...s, status: ev.status as PlanStep["status"] } : s)) }));
             break;
           case "delta":
             update(id, (x) => ({ ...x, text: x.text + (ev.text as string) }));
@@ -122,7 +148,7 @@ export function ChatPanel() {
             update(id, (x) => ({ ...x, vision: !!ev.image_sent }));
             break;
           case "done":
-            update(id, (x) => ({ ...x, status: "done", stats: ev.stats as AIStats, reporter: ev.reporter as string, totalMs: ev.total_ms as number }));
+            update(id, (x) => ({ ...x, status: "done" }));
             break;
         }
       }
@@ -135,120 +161,98 @@ export function ChatPanel() {
     }
   };
 
-  const watch = !!st?.agent?.watch;
-  const toggleWatch = async () => {
-    try {
-      await post("/api/agent/watch", { enabled: !watch });
-    } catch (e) {
-      toast(errorMessage(e), "error");
-    }
-  };
-
-  const stop = async () => {
-    await post("/api/agent/stop").catch(() => {});
-  };
-
-  const clear = async () => {
-    await del("/api/agent/history").catch(() => {});
-    setTurns([]);
-  };
+  useEffect(() => {
+    const onAsk = (e: Event) => void run((e as CustomEvent<string>).detail);
+    window.addEventListener("strix:ask", onAsk);
+    return () => window.removeEventListener("strix:ask", onAsk);
+  });
 
   return (
-    <ConsolePanel
-      title="Chat"
-      className="h-full"
-      bodyClassName="!p-0 flex flex-col"
-      actions={
-        <>
-          <button className={`rounded-[3px] border px-1.5 text-[10px] tracking-wider ${watch ? "border-accent-dim bg-[#173a27] text-accent" : "border-line-2 text-muted"}`}
-            title="When YOLO sees something new, Qwen comments automatically" onClick={() => void toggleWatch()}>
-            <Eye size={10} className="mr-0.5 inline" />WATCH {watch ? "ON" : "OFF"}
-          </button>
-          <button className="rounded-[3px] border border-blue/50 bg-blue/10 px-1.5 text-[10px] tracking-wider text-blue disabled:opacity-40"
-            disabled={busy} title="Ask Qwen to identify what the camera sees" onClick={() => void run("Identify what you see in the camera view")}>
-            <ScanSearch size={10} className="mr-0.5 inline" />IDENTIFY
-          </button>
-          <span className={`rounded-[3px] border px-1.5 text-[10px] tracking-wider ${qwen?.state === "ready" ? "border-accent-dim bg-[#173a27] text-accent" : "border-warn/50 text-warn"}`}
-            title={qwen?.detail ?? undefined}>
-            QWEN {qwen?.state === "ready" ? (qwen.last?.tokens_per_s ? `${qwen.last.tokens_per_s.toFixed(1)} t/s` : "READY") : (qwen?.state ?? "…").toUpperCase()}
-          </span>
-          <button className="text-muted hover:text-crit" title="Clear chat" onClick={() => void clear()}><Trash2 size={12} /></button>
-        </>
-      }
-    >
-      {qwen && qwen.state !== "ready" && (
-        <div className="border-b border-warn/30 bg-warn/5 px-2.5 py-1 text-[10.5px] text-warn">
-          {qwen.state === "loading" ? "Qwen is loading its model…" : "Qwen is not running on the Pi — answers use the keyword planner. To install it, on the Pi run: scripts/setup_ai.sh"}
-        </div>
-      )}
-      <div ref={scroller} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5 text-[12px]">
+    <>
+      <div ref={scroller} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5 text-[12.5px]">
         {turns.length === 0 && (
-          <div className="space-y-2 text-muted">
-            <p>Talk to Qwen. It moves the camera servo, looks at the camera image{qwen?.vision_capable ? "" : " (with the vision model)"}, reads the MPU6050,
-              DHT11 and YOLO detections, estimates distances and suggests how to move. With <span className="text-accent">WATCH ON</span> it
-              speaks up by itself when YOLO spots something new.</p>
-            <div className="flex flex-wrap gap-1">
-              {QUICK.map((q) => <button key={q} className="btn btn-sm !normal-case !tracking-normal" onClick={() => void run(q)}>{q}</button>)}
-            </div>
+          <div className="flex flex-wrap gap-1">
+            {QUICK.map((q) => <button key={q} className="btn btn-sm !normal-case !tracking-normal" onClick={() => void run(q)}>{q}</button>)}
           </div>
         )}
         {turns.map((t) => t.role === "user" ? (
-          <div key={t.id} className="ml-8 rounded-[3px] border border-line-2 bg-[#171c18] px-2 py-1.5">{t.text}</div>
+          <div key={t.id} className="ml-10 rounded-[3px] border border-line-2 bg-[#171c18] px-2 py-1.5">{t.text}</div>
         ) : (
-          <div key={t.id} className="mr-2 rounded-[3px] border border-line bg-[#0d100e] px-2 py-1.5">
-            <div className="mb-1 flex items-center gap-1.5 text-[10px] tracking-wider">
-              {t.auto ? <Eye size={12} className="text-accent" /> : <Bot size={12} className="text-accent" />}
-              <span className="text-accent">{t.auto ? "YOLO WATCH" : "QWEN AGENT"}</span>
-              {t.auto && <span className="rounded-[3px] border border-line-2 px-1 text-muted">{t.reporter === "qwen" ? "QWEN" : "RULES"}</span>}
-              {t.planner && <span className="rounded-[3px] border border-line-2 px-1 text-muted">{t.planner === "qwen" ? "QWEN PLAN" : "RULE PLAN"}</span>}
-              {t.vision && <span className="rounded-[3px] border border-synth/40 px-1 text-synth">SAW CAMERA IMAGE</span>}
-              {t.status === "running" && <Loader2 size={11} className="animate-spin text-accent" />}
+          <div key={t.id} className="group mr-4 rounded-[3px] border border-line bg-[#0d100e] px-2 py-1.5">
+            <div className="mb-0.5 flex items-center gap-1.5 text-[10px] tracking-wider text-accent">
+              {t.auto ? <Eye size={11} /> : <Bot size={11} />}
+              <span>QWEN</span>
+              {t.vision && <span title="Qwen looked at the camera image" className="text-synth"><ScanSearch size={11} /></span>}
+              {t.status === "running" && <Loader2 size={11} className="animate-spin" />}
               {t.status === "done" && t.text && (
-                <button className="ml-auto text-muted hover:text-text" title="Copy" onClick={() => void copyText(t.text).then((ok) => toast(ok ? "Copied" : "Copy failed", ok ? "ok" : "error"))}>
+                <button className="ml-auto text-muted opacity-0 hover:text-text group-hover:opacity-100" title="Copy"
+                  onClick={() => void copyText(t.text).then((ok) => toast(ok ? "Copied" : "Copy failed", ok ? "ok" : "error"))}>
                   <Copy size={11} />
                 </button>
               )}
             </div>
-            {t.thought && <div className="mb-1 text-[11px] italic text-dim">{t.thought}</div>}
-            {(t.steps ?? []).length > 0 && (
-              <ol className="mb-1 space-y-0.5 text-[11px]">
+            {t.status === "running" && (t.steps ?? []).length > 0 && (
+              <ol className="mb-1 space-y-0.5 text-[11px] text-muted">
                 {t.steps!.map((s, i) => (
-                  <li key={i} className="flex items-start gap-1.5">
-                    <span className="mt-[3px]"><StepIcon s={s.status} /></span>
-                    <span>{s.text}{s.result && <span className="block text-[10.5px] text-dim">{s.result}</span>}</span>
-                  </li>
+                  <li key={i} className="flex items-center gap-1.5"><StepIcon s={s.status} />{s.text}</li>
                 ))}
               </ol>
             )}
-            {t.status === "running" && (t.progress ?? []).length > 0 && <div className="mb-1 text-[10.5px] text-dim">{t.progress![t.progress!.length - 1]}</div>}
-            {t.text ? <RichText text={t.text} /> : t.status === "running" && <span className="text-dim">working…</span>}
-            {t.suggestions && t.suggestions.length > 0 && t.reporter === "qwen" && (
-              <details className="mt-1 text-[10.5px] text-muted"><summary className="cursor-pointer">computed suggestions</summary>
-                <ul className="ml-4 list-disc">{t.suggestions.map((s, i) => <li key={i}>{s}</li>)}</ul></details>
-            )}
-            {t.error && <div className="mt-1 text-[11px] text-crit">⚠ {t.error}</div>}
-            {t.status !== "running" && (t.totalMs != null || t.stats?.latency_ms != null) && (
-              <div className="mt-1 text-[10px] text-dim">
-                {t.totalMs != null && `${(t.totalMs / 1000).toFixed(1)} s total`}
-                {t.stats?.tokens_per_s != null && ` · ${t.stats.tokens_per_s.toFixed(1)} tok/s`}
-                {t.reporter && ` · report: ${t.reporter === "qwen" ? "Qwen" : "rule-based"}`}
-              </div>
-            )}
+            {t.text ? <RichText text={t.text} /> : t.status === "running" && <span className="text-dim">thinking…</span>}
+            {t.error && <div className="mt-1 text-[11px] text-crit">{t.error}</div>}
           </div>
         ))}
       </div>
       <div className="border-t border-line p-2">
         <form className="flex gap-1" onSubmit={(e) => { e.preventDefault(); void run(input); }}>
-          <input className="input min-w-0 flex-1" maxLength={1000} placeholder={busy ? "Qwen is working… (Esc to stop)" : "give Qwen a task, e.g. find the person and keep them centered"}
-            value={input} onChange={(e) => setInput(e.target.value)} disabled={busy} aria-label="Task for Qwen" />
+          <input className="input min-w-0 flex-1" maxLength={1000} placeholder={busy ? "Qwen is working… (Esc to stop)" : "Ask Qwen… e.g. where is the ball?"}
+            value={input} onChange={(e) => setInput(e.target.value)} disabled={busy} aria-label="Message for Qwen" />
           {busy ? (
-            <button type="button" className="btn btn-danger" onClick={() => { void stop(); abort.current?.abort(); }} title="Stop the agent"><Square size={12} /></button>
+            <button type="button" className="btn btn-danger" onClick={() => { void post("/api/agent/stop").catch(() => {}); abort.current?.abort(); }} title="Stop"><Square size={12} /></button>
           ) : (
             <button type="submit" className="btn btn-primary" disabled={!input.trim()} title="Send"><Send size={13} /></button>
           )}
         </form>
-        <div className="mt-1 text-[10px] text-dim">Qwen runs locally on the Pi · it can move only the camera tilt servo (when enabled) · movement advice is for the pilot.</div>
       </div>
-    </ConsolePanel>
+    </>
+  );
+}
+
+type Tab = "qwen" | "recordings";
+
+/** Qwen + YOLO in one place, with recordings as the second tab. */
+export function ChatPanel() {
+  const st = useTelemetry();
+  const q = st?.ai?.qwen;
+  const [tab, setTab] = useState<Tab>("qwen");
+  const ready = q?.state === "ready";
+  const clear = async () => {
+    await del("/api/agent/history").catch(() => {});
+    window.dispatchEvent(new Event("strix:reset"));
+  };
+  return (
+    <section className="panel flex h-full min-h-0 flex-col">
+      <header className="panel-head flex items-center gap-1 px-2 py-1.5">
+        <button className={`chip-tab ${tab === "qwen" ? "active" : ""}`} onClick={() => setTab("qwen")}>
+          <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full ${ready ? "bg-accent" : "bg-warn"}`} />Qwen
+        </button>
+        <button className={`chip-tab ${tab === "recordings" ? "active" : ""}`} onClick={() => setTab("recordings")}>Recordings</button>
+        {tab === "qwen" && (
+          <div className="ml-auto flex items-center gap-2">
+            <button className="rounded-[3px] border border-blue/50 bg-blue/10 px-1.5 text-[10px] tracking-wider text-blue"
+              title="Ask Qwen what the camera sees" onClick={() => window.dispatchEvent(new CustomEvent("strix:ask", { detail: "What do you see?" }))}>
+              <ScanSearch size={10} className="mr-0.5 inline" />IDENTIFY
+            </button>
+            <button className="text-muted hover:text-crit" title="Clear chat" onClick={() => void clear()}><Trash2 size={12} /></button>
+          </div>
+        )}
+      </header>
+      {/* the chat stays mounted so a running task keeps streaming while Recordings is open */}
+      <div className={tab === "qwen" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+        <YoloTargets />
+        <Chat />
+      </div>
+      {tab === "recordings" && <div className="min-h-0 flex-1 overflow-auto p-2.5"><RecordingsTab /></div>}
+    </section>
   );
 }

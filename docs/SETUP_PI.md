@@ -116,7 +116,8 @@ cd ~/STRIX-1 && scripts/setup_ai.sh
 ```
 
 This installs the YOLO detector, builds llama.cpp, downloads Qwen2.5-VL-3B (vision), installs the
-`strix1-llama` service, updates `.env` and restarts STRIX-1. Run it inside `tmux`, since it takes 20–30 minutes.
+`strix1-llama` service, updates `.env` and restarts STRIX-1. You only do this once: after that Qwen starts by
+itself on every boot (`install_pi.sh` offers to run it for you at the end). Run it inside `tmux`, since it takes 20–30 minutes.
 Use `--fast` for the smaller Qwen2-VL-2B. When it finishes, the **QWEN** row in the dashboard's
 SYSTEM STATUS corner turns green and reads `ready · vision`. Details: [AI.md](AI.md).
 
@@ -130,8 +131,8 @@ scripts/get_detector_model.sh --yolo11n
 
 The detector picks up `models/*.onnx` automatically (YOLO11/YOLOv8 preferred over YOLOX). Without
 a model it falls back to OpenCV's person-only HOG detector. Check the YOLO FPS in the video's
-top-right corner. Then test the servo direction: press **E**, then **W**. The camera must tilt
-**up**; if it tilts down, set `STRIX_SERVO_UP_IS_POSITIVE=false`.
+top-right corner. Then test the servo direction with the ▲ button under the video (or **W**). The camera
+must tilt **up**; if it tilts down, set `STRIX_SERVO_UP_IS_POSITIVE=false`.
 
 ## 8. Autostart with systemd
 

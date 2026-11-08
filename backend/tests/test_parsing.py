@@ -106,8 +106,6 @@ def test_axis_map():
 
 def test_env_example_parses(tmp_path):
     """The shipped .env.example (with inline comments) must load cleanly."""
-    from pathlib import Path
-
     from app.config.settings import REPO_ROOT, Settings
 
     s = Settings(_env_file=str(REPO_ROOT / ".env.example"))
@@ -117,7 +115,7 @@ def test_env_example_parses(tmp_path):
     assert not (s.auth_token and s.auth_token.get_secret_value().strip())
     assert s.detector_backend == "auto" and s.detector_prompts == "person" and s.servo_up_is_positive is True
     assert s.servo_backend == "auto" and s.qwen_threads == 3
-    assert Path(s.qwen_model_path).name.endswith(".gguf")
+    assert s.qwen_model_path == "" and s.qwen_manage_server == "auto"  # auto-detected from models/
 
 
 def test_env_strings_are_coerced(tmp_path, monkeypatch):

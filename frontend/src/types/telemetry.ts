@@ -53,6 +53,8 @@ export interface ServoState {
   limits: { min_angle: number; max_angle: number; center_angle: number; max_speed_dps: number; hardware_min: number; hardware_max: number };
   pulse_range_us: [number, number];
   gpio: number;
+  pin?: number | null;
+  estop_latched?: boolean;
   position_feedback: boolean;
   tilt_deg: number | null;
   up_is_positive: boolean;
@@ -116,7 +118,7 @@ export interface AIStats {
 
 export interface AIBrief {
   provider: string; label: string; enabled: boolean; state: string; detail: string | null; busy?: boolean; queued?: number;
-  vision_capable: boolean; model_id?: string; last: AIStats | null;
+  vision_capable: boolean; model_id?: string; last: AIStats | null; installed?: boolean;
 }
 
 export interface DetectedObject {

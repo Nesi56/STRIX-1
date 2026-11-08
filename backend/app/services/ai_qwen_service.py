@@ -4,7 +4,8 @@ The backend talks to llama-server's OpenAI-compatible API
 (``/v1/chat/completions``) and its native ``/health`` (503 while the model is
 loading) and ``/props`` (``modalities.vision``) endpoints. Optionally the
 backend launches and supervises llama-server itself
-(``QWEN_MANAGE_SERVER=true``).
+(``QWEN_MANAGE_SERVER=true``), or automatically when nothing answers and a model is installed
+(``QWEN_MANAGE_SERVER=auto``, the default).
 
 Inference is serialized (one request at a time) so a 4-core Pi 5 is never
 oversubscribed; the model never blocks sensor acquisition, which runs in
@@ -74,6 +75,8 @@ class QwenService:
         self.vision_capable = False
         self.stats: dict[str, Any] = {"requests": 0, "errors": 0, "last": None}
         self._started_at: float | None = None
+        self._installed = False
+        self._installed_checked = 0.0
 
     # ------------------------------------------------------------ lifecycle
     def _headers(self) -> dict[str, str]:
@@ -85,7 +88,7 @@ class QwenService:
             return
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(self.settings.qwen_timeout_s, connect=5.0),
                                          headers=self._headers(), transport=self._transport)
-        if self.settings.qwen_manage_server:
+        if self.settings.qwen_manage_server is True:
             self.start_server()
         self._monitor_task = asyncio.create_task(self._monitor(), name="qwen-monitor")
 
@@ -96,30 +99,83 @@ class QwenService:
         if self._client:
             await self._client.aclose()
 
-    def server_command(self) -> list[str]:
+    def discover(self) -> dict[str, str | None]:
+        """Find what is needed to run Qwen: the llama-server binary, the model and (for vision) its projector.
+        Uses the QWEN_* settings, else what scripts/setup_ai.sh installs (models/*.gguf, ~/llama.cpp)."""
         s = self.settings
+        bin_ = None
+        for cand in (s.qwen_llama_server_bin, str(Path.home() / "llama.cpp" / "build" / "bin" / "llama-server")):
+            if cand and (Path(cand).is_file() or shutil.which(cand)):
+                bin_ = shutil.which(cand) or cand
+                break
+        model = s.qwen_model_path if s.qwen_model_path and Path(s.qwen_model_path).is_file() else None
+        mmproj = s.qwen_mmproj_path if s.qwen_mmproj_path and Path(s.qwen_mmproj_path).is_file() else None
+        d = Path(s.models_dir)
+        if d.is_dir():
+            ggufs = sorted(d.glob("*.gguf"), key=lambda f: f.stat().st_size, reverse=True)
+            if model is None:
+                model = next((str(f) for f in ggufs if "mmproj" not in f.name.lower()), None)
+            if mmproj is None and model and "vl" in Path(model).name.lower():
+                mmproj = next((str(f) for f in ggufs if "mmproj" in f.name.lower()), None)
+        return {"bin": bin_, "model": model, "mmproj": mmproj}
+
+    @property
+    def installed(self) -> bool:
+        now = time.time()
+        if now - self._installed_checked > 30:  # cached: called from the 1 Hz telemetry
+            found = self.discover()
+            self._installed, self._installed_checked = bool(found["bin"] and found["model"]), now
+        return self._installed
+
+    def server_command(self, found: dict[str, str | None] | None = None) -> list[str]:
+        s = self.settings
+        found = found or self.discover()
         u = urlparse(self.base_url)
-        cmd = [s.qwen_llama_server_bin, "-m", s.qwen_model_path, "-c", str(s.qwen_ctx_size), "-t", str(s.qwen_threads),
-               "--host", u.hostname or "127.0.0.1", "--port", str(u.port or 8080)]
-        if s.qwen_mmproj_path:
-            cmd += ["--mmproj", s.qwen_mmproj_path]
+        cmd = [found["bin"] or s.qwen_llama_server_bin, "-m", found["model"] or s.qwen_model_path, "-c", str(s.qwen_ctx_size),
+               "-t", str(s.qwen_threads), "--host", u.hostname or "127.0.0.1", "--port", str(u.port or 8080)]
+        if found["mmproj"]:
+            cmd += ["--mmproj", found["mmproj"]]
         return cmd
 
-    def start_server(self) -> dict[str, Any]:
+    @staticmethod
+    def _other_llama_running() -> bool:
+        try:
+            import psutil
+
+            return any("llama-server" in (p.info.get("name") or "") for p in psutil.process_iter(["name"]))
+        except Exception:
+            return False
+
+    async def _auto_start(self) -> None:
+        """QWEN_MANAGE_SERVER=auto: no server answered for a while → start one if a model is installed."""
+        if (self.settings.qwen_manage_server != "auto" or self._proc is not None or self.state != "unreachable"
+                or self._started_at is None or time.time() - self._started_at < 20):
+            return
+        found = await asyncio.to_thread(self.discover)
+        if not (found["bin"] and found["model"]):
+            self.detail = "Qwen isn't installed yet — run scripts/setup_ai.sh once"
+            return
+        if await asyncio.to_thread(self._other_llama_running):
+            return  # e.g. the strix1-llama service is still loading
+        self.events.add("info", "ai", f"starting Qwen automatically ({Path(found['model']).name})")
+        self.start_server(found)
+
+    def start_server(self, found: dict[str, str | None] | None = None) -> dict[str, Any]:
         s = self.settings
         if self._proc and self._proc.poll() is None:
             return self.status()
-        if not s.qwen_model_path or not Path(s.qwen_model_path).is_file():
-            self.state, self.detail = "error", f"model file not found: {s.qwen_model_path or '(QWEN_MODEL_PATH unset)'}"
+        found = found or self.discover()
+        if not found["model"]:
+            self.state, self.detail = "error", f"model file not found: {s.qwen_model_path or '(no .gguf in models/)'}"
             return self.status()
-        if shutil.which(s.qwen_llama_server_bin) is None and not Path(s.qwen_llama_server_bin).is_file():
+        if not found["bin"]:
             self.state, self.detail = "error", f"llama-server binary not found: {s.qwen_llama_server_bin}"
             return self.status()
         try:
             import psutil
 
             avail_mb = psutil.virtual_memory().available / 1e6
-            need_mb = Path(s.qwen_model_path).stat().st_size / 1e6 * 1.25 + 300
+            need_mb = Path(found["model"]).stat().st_size / 1e6 * 1.25 + 300
             if avail_mb < need_mb:
                 self.state, self.detail = "error", f"insufficient memory: {avail_mb:.0f} MB available, ≈{need_mb:.0f} MB needed"
                 return self.status()
@@ -128,7 +184,7 @@ class QwenService:
         log_dir = s.data_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         self._proc_log = open(log_dir / "llama-server.log", "ab")
-        cmd = self.server_command()
+        cmd = self.server_command(found)
         log.info("starting llama-server: %s", " ".join(cmd))
         # Lower priority (nice 5) so sensor/telemetry threads stay responsive.
         self._proc = subprocess.Popen(cmd, stdout=self._proc_log, stderr=subprocess.STDOUT,
@@ -158,8 +214,13 @@ class QwenService:
         return self.start_server()
 
     async def _monitor(self) -> None:
+        self._started_at = self._started_at or time.time()
         while True:
             await self.refresh()
+            try:
+                await self._auto_start()
+            except Exception:
+                log.exception("automatic Qwen start failed")
             await asyncio.sleep(3.0 if self.state != "ready" else 10.0)
 
     async def refresh(self) -> None:
@@ -337,6 +398,7 @@ class QwenService:
             "pid": self._proc.pid if self._proc and self._proc.poll() is None else None,
             "model_id": s.qwen_model_id,
             "model_path": s.qwen_model_path or None,
+            "installed": self.installed,
             "ctx_size": s.qwen_ctx_size,
             "threads": s.qwen_threads,
             "max_tokens": s.qwen_max_tokens,

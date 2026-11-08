@@ -110,14 +110,28 @@ def test_plan_is_validated_and_clamped(client):
     assert client.get("/api/servo").json()["target_angle"] <= 150
 
 
-def test_servo_disabled_means_no_motion(client):
+def test_task_turns_on_servo_control(client):
     use_fake(client, FakeLlama())
+    assert client.get("/api/servo").json()["armed"] is False
+    evs = run(client, "look up a bit")
+    assert by_type(evs, "step")[-1]["status"] == "done"
+    after = client.get("/api/servo").json()
+    assert after["armed"] is True and after["tilt_deg"] == pytest.approx(15, abs=1)
+
+
+def test_emergency_stop_latch_blocks_motion_until_enable(client):
+    use_fake(client, FakeLlama())
+    client.post("/api/estop")
     before = client.get("/api/servo").json()
+    assert before["estop_latched"] is True
     evs = run(client, "look up a bit")
     step = by_type(evs, "step")[-1]
-    assert step["status"] == "skipped" and "enable" in step["text"]
+    assert step["status"] == "skipped" and "EMERGENCY STOP" in step["text"]
     after = client.get("/api/servo").json()
     assert after["armed"] is False and after["commanded_angle"] == before["commanded_angle"]
+    assert client.post("/api/servo/nudge", json={"up_deg": 5}).status_code == 409  # buttons are blocked too
+    assert client.post("/api/servo/arm").json()["estop_latched"] is False  # explicit enable clears the latch
+    assert by_type(run(client, "look up a bit"), "step")[-1]["status"] == "done"
 
 
 def test_rule_planner_when_qwen_offline(client):
@@ -126,7 +140,8 @@ def test_rule_planner_when_qwen_offline(client):
     plan = by_type(evs, "plan")[0]
     assert plan["planner"] == "rules" and plan["steps"][0] == {**plan["steps"][0], "skill": "tilt", "delta": -10}
     assert client.get("/api/servo").json()["tilt_deg"] == pytest.approx(-10, abs=1)
-    assert "rule-based" in final_text(evs) and evs[-1]["reporter"] == "rules"
+    assert "tilted the camera down 10°" in final_text(evs).lower() and evs[-1]["reporter"] == "rules"
+    assert "[" not in final_text(evs)  # plain language, no tags
 
 
 def test_bad_model_json_falls_back_to_rules(client):
@@ -134,7 +149,7 @@ def test_bad_model_json_falls_back_to_rules(client):
     client.post("/api/servo/arm")
     evs = run(client, "look up 10 degrees")
     plan = by_type(evs, "plan")[0]
-    assert plan["planner"] == "rules" and "bad_json" in plan["thought"]
+    assert plan["planner"] == "rules"
     assert plan["steps"][0]["skill"] == "tilt"
 
 
@@ -143,11 +158,11 @@ def test_track_keeps_target_centered(client):
     client.post("/api/servo/limits", json={"min_angle": 30, "max_angle": 150, "max_speed_dps": 120})
     evs = run(client, "track the person")
     res = by_type(evs, "step")[-1]
-    assert res["status"] == "done" and "vertically centered" in res["text"]
-    pct = int(res["text"].split("centered in ")[1].split("%")[0])
+    assert res["status"] == "done" and "kept the person centered" in res["text"]
+    pct = int(res["text"].split("(")[1].split("%")[0])
     assert pct >= 50
     sugg = by_type(evs, "suggestions")[0]["items"]
-    assert any(s.startswith(("Yaw", "Heading")) for s in sugg)
+    assert any(s.startswith(("Turn the drone", "The drone is facing")) for s in sugg)
 
 
 def test_report_shell_commands_are_removed(client):
@@ -288,7 +303,7 @@ def test_watch_mode_comments_on_yolo_detections(watch_client):
                 break
     assert msg is not None, "no watch comment arrived"
     assert msg["auto"] is True and msg["provider"] == "rules" and "person" in msg["text"]
-    assert "SUGGEST" in msg["text"]
+    assert msg["text"].startswith("I see") and "[" not in msg["text"]
     hist = watch_client.get("/api/agent/history").json()
     assert hist[-1]["meta"].get("auto") is True
     assert watch_client.post("/api/agent/watch", json={"enabled": False}).json()["watch"] is False
@@ -316,10 +331,10 @@ def _obs(dets, armed=True, roll=0.0):
 def test_suggestions_are_geometric_and_advisory():
     d = {"label": "person", "confidence": 0.9, "distance_m": 5.0, "distance_kind": "estimate", "bearing_deg": 20.0, "elevation_deg": -12.0}
     s = suggestions(_obs([d], armed=False), "person", 1.5)
-    assert s[0].startswith("Yaw right ~20°")
-    assert any("Advance ~3.5 m" in x for x in s)
-    assert any("Tilt the camera down ~12°" in x for x in s)
+    assert s[0].startswith("Turn the drone right about 20°")
+    assert any("Move about 3.5 m closer" in x for x in s)
+    assert any("tilt the camera down about 12°" in x for x in s)
     s = suggestions(_obs([], roll=30), "car", 1.5)
-    assert any("No car detected" in x for x in s) and any("Level the airframe" in x for x in s)
+    assert any("I can't see a car" in x for x in s) and any("Level the drone" in x for x in s)
     near = dict(d, distance_m=1.2, bearing_deg=2.0)
     assert any("hold position" in x for x in suggestions(_obs([near]), "person", 1.5))

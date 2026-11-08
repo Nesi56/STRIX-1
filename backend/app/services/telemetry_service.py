@@ -200,7 +200,7 @@ class TelemetryService:
 
 
 def _ai_brief(s: dict[str, Any]) -> dict[str, Any]:
-    keep = ("provider", "label", "enabled", "state", "detail", "busy", "queued", "vision_capable", "model_id")
+    keep = ("provider", "label", "enabled", "state", "detail", "busy", "queued", "vision_capable", "model_id", "installed")
     out = {k: s.get(k) for k in keep if k in s}
     stats = s.get("stats") or {}
     out["last"] = stats.get("last")

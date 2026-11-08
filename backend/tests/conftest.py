@@ -26,6 +26,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
         telemetry_hz=20,
         recording_sample_hz=20,
         qwen_server_url="http://127.0.0.1:9",  # nothing listens here
+        qwen_manage_server=False,  # never start a real llama-server from the tests
         agent_watch=False,  # enabled explicitly in the watch tests
         log_level="WARNING",
     )

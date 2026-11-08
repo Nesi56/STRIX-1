@@ -76,8 +76,16 @@ Code uses **BCM GPIO numbers**; the tables also list **physical header pins**.
 | SG90 wire | Connect to |
 |---|---|
 | Orange/yellow (signal) | Pi physical pin 12 (GPIO18) |
-| Red (+5 V) | **regulated external 5 V** supply rated ≥ 1 A (SG90 stall ≈ 650–750 mA) |
-| Brown (GND) | supply ground **and** a Pi GND pin (common ground) |
+| Red (+5 V) | 52Pi PD board **OUTPUT +5V** (or another regulated 5 V supply rated ≥ 1 A; SG90 stall ≈ 650–750 mA) |
+| Brown/black (GND) | 52Pi PD board **OUTPUT GND**, which must share ground with the Pi |
+
+These are the defaults in the code (`STRIX_SERVO_GPIO=18`), so nothing needs configuring. The SG90 has no
+feedback wire, so the Pi **can't detect** whether it's plugged in: the dashboard's SERVO row shows whether the
+GPIO18 signal can be driven. Press **Servo on** (under the video) and the ▲/▼ buttons to see it move.
+If the row is red, it shows the fix (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#servo)). The most common
+one on the Pi 5 is the systemd service: lgpio needs a writable working directory, so the unit sets
+`LG_WD=<repo>/data/lgpio`. Re-run `scripts/install_pi.sh --skip-apt --skip-frontend --systemd` if you
+installed the service before this fix.
 
 - **Never power the servo from a GPIO pin.** Avoid the Pi's 5 V header pins too unless the
   supply has headroom: servo current spikes can brown out the Pi (watch for under-voltage

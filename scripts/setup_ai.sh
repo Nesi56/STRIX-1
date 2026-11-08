@@ -67,7 +67,7 @@ say "5/5  Configure STRIX-1"
 set_env() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else echo "$1=$2" >> .env; fi; }
 set_env QWEN_ENABLED true
 set_env QWEN_SERVER_URL http://127.0.0.1:8080
-set_env QWEN_MANAGE_SERVER false
+set_env QWEN_MANAGE_SERVER auto
 set_env QWEN_MODEL_ID "${MODEL_FILE%.gguf}"
 if systemctl is-enabled --quiet strix1 2>/dev/null; then sudo systemctl restart strix1; echo "restarted strix1"; fi
 

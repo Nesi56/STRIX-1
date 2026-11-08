@@ -1,23 +1,23 @@
 import { Fragment, type ReactNode } from "react";
-import { Tag } from "./ui";
 
-const TAG_TONE: Record<string, "ok" | "warn" | "muted" | "cyan" | "blue" | "synth"> = {
-  MEASURED: "ok", DETECTED: "cyan", SEEN: "synth", REMEMBERED: "warn", DERIVED: "blue", INTERPRETATION: "warn", UNAVAILABLE: "muted", SUGGEST: "blue", HEALTH: "synth",
-};
-const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[(?:MEASURED|DETECTED|SEEN|REMEMBERED|DERIVED|INTERPRETATION|UNAVAILABLE|HEALTH)\]|\bSUGGEST:)/g;
+// Answers are plain sentences. Older/other models may still emit claim tags like [DETECTED] or "SUGGEST:";
+// they are hidden instead of being shown as jargon.
+const TAGS = /\s*\[(?:MEASURED|DETECTED|SEEN|REMEMBERED|DERIVED|INTERPRETATION|UNAVAILABLE|HEALTH)\]\s*/g;
+const INLINE = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+
+export function plain(text: string): string {
+  return text.replace(TAGS, " ").replace(/\bSUGGEST:\s*/g, "Tip: ").replace(/ {2,}/g, " ").trim();
+}
 
 function inline(text: string): ReactNode[] {
-  return text.split(INLINE).filter(Boolean).map((part, i) => {
+  return plain(text).split(INLINE).filter(Boolean).map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) return <strong key={i}>{part.slice(2, -2)}</strong>;
     if (part.startsWith("`") && part.endsWith("`")) return <code key={i} className="rounded bg-white/5 px-1">{part.slice(1, -1)}</code>;
-    if (part === "SUGGEST:") return <Tag key={i} tone="blue">SUGGEST</Tag>;
-    const m = part.match(/^\[(.+)\]$/);
-    if (m && TAG_TONE[m[1]]) return <Tag key={i} tone={TAG_TONE[m[1]]}>{m[1]}</Tag>;
     return <Fragment key={i}>{part}</Fragment>;
   });
 }
 
-/** Safe minimal rich text: paragraphs, bullet lists, bold, code, claim tags. No HTML injection. */
+/** Safe minimal rich text: paragraphs, bullet lists, bold, code. No HTML injection. */
 export function RichText({ text }: { text: string }) {
   const blocks: ReactNode[] = [];
   let list: string[] = [];
