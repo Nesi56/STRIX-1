@@ -20,12 +20,14 @@ from app.services.base import DeviceState, DeviceStatus, StoppableThread
 from app.services.camera_service import CameraService
 from app.services.detector import (
     COCO80,
+    SIZE_PRIORS_M,
     Detection,
     HogPersonDetector,
     OnnxDetector,
     estimate_geometry,
     find_default_model,
     normalize_label,
+    parse_size_priors,
 )
 from app.services.hub import EventLog
 
@@ -38,8 +40,9 @@ class DetectorError(ValueError):
 
 class DetectorService:
     def __init__(self, settings: Settings, camera: CameraService, events: EventLog, db=None,
-                 session_id=lambda: None) -> None:
+                 session_id=lambda: None, pose=None) -> None:
         self.settings = settings
+        self._pose = pose  # () -> {"yaw", "pitch", "roll", "tilt"} sampled when a frame is grabbed
         self.camera = camera
         self.events = events
         self.db = db
@@ -140,7 +143,24 @@ class DetectorService:
             self.events.add("info", "detector", f"prompts: {', '.join(cleaned) or '(all classes)'}")
         return self.prompts
 
+    def size_priors(self) -> dict[str, float]:
+        """Typical object sizes for distance estimates: defaults, then .env overrides, then the synthetic scene's
+        true sizes (demo only, so the synthetic table-top ball isn't sized like a football)."""
+        out = dict(SIZE_PRIORS_M)
+        out.update(parse_size_priors(self.settings.detector_size_priors))
+        if self.engine_kind == "synthetic":
+            out.update(self.camera.scene_size_priors())
+        return out
+
     # ------------------------------------------------------------ loop
+    def _sample_pose(self) -> dict[str, float] | None:
+        if self._pose is None:
+            return None
+        try:
+            return self._pose()
+        except Exception:
+            return None
+
     def _detect_once(self) -> tuple[int, int, list[tuple[str, float, tuple[float, float, float, float]]], int | None]:
         seq, frame = self.camera.hub.latest()
         if self.engine_kind == "synthetic":
@@ -163,6 +183,7 @@ class DetectorService:
                 stop.wait(1.0)
                 continue
             try:
+                pose = self._sample_pose()
                 w, h, raw, seq = self._detect_once()
                 infer_ms = (time.monotonic() - t0) * 1000.0
             except Exception as exc:
@@ -170,8 +191,10 @@ class DetectorService:
                 stop.wait(0.5)
                 continue
             dets = []
+            priors = self.size_priors()
             for label, conf, (x, y, bw, bh) in raw:
-                dist, kind, bearing, elev = estimate_geometry(label, (x, y, bw, bh), w, h, self.settings.camera_hfov_deg)
+                dist, kind, bearing, elev = estimate_geometry(label, (x, y, bw, bh), w, h, self.settings.camera_hfov_deg,
+                                                              priors)
                 dets.append(Detection(
                     label=label, confidence=round(conf, 3),
                     bbox=[round(x / w, 4), round(y / h, 4), round(bw / w, 4), round(bh / h, 4)],
@@ -186,7 +209,7 @@ class DetectorService:
                 self._seq += 1
                 self._latest = {
                     "seq": self._seq, "ts": time.time(), "frame_seq": seq, "frame_w": w, "frame_h": h,
-                    "all": dets, "synthetic": self.status.synthetic,
+                    "all": dets, "synthetic": self.status.synthetic, "pose": pose,
                 }
             self.status.touch()
             self.status.set(DeviceState.SYNTHETIC if self.status.synthetic else DeviceState.OK)

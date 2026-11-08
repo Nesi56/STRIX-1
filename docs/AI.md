@@ -5,11 +5,14 @@ llama.cpp. No cloud service is used. Qwen:
 
 1. **sees**: with the Qwen-VL vision model it looks at the current camera frame and identifies what is there (`[SEEN]`),
 2. **reacts to YOLO**: in WATCH mode it comments by itself when YOLO detects new objects,
-3. **controls the camera tilt servo** (look up/down, center, scan, find an object, keep it centered),
+3. **controls the camera tilt servo** (look up/down, center, scan, find an object, keep it centered,
+   go back to a remembered object),
 4. **reads the sensors**: MPU6050 attitude, DHT11 temperature/humidity, and YOLO detections,
 5. **estimates distance and direction** to detected objects,
 6. **suggests how to move** or how to complete the task. The human pilot flies the drone;
    STRIX-1 never sends flight commands.
+7. **remembers objects** it has seen, including ones hidden under a cup (object permanence). See
+   [Object memory](#object-memory-seen-vs-remembered-vs-hidden).
 
 ## The agent graph
 
@@ -37,6 +40,7 @@ GENERATOR ──plan──▶ EXECUTION LOOP [ OBSERVER → PILOT → UNTIL ↺ 
 | `scan` | — | swept 5 tilt angles, then returns to the best view |
 | `find` | `target` (COCO class) | target detected (or not found in range) |
 | `track` | `target`, `seconds` | time elapsed. A proportional controller keeps the target vertically centered. Fails if the target is lost for > 3 s. |
+| `goto` | `target` (class or `#id`) | the camera is aimed at the **remembered** object (even out of view or hidden under a cup). The report says whether it is SEEN again, plus yaw/distance advice. |
 | `wait` | `seconds` | time elapsed |
 
 The servo only tilts. Horizontal alignment is given as a suggestion ("yaw right ~14°").
@@ -73,6 +77,54 @@ If llama-server is loading or unreachable, the dashboard keeps working. A **keyw
 (e.g. "look up 20 degrees", "find the person", "track the dog", "scan") and a **rule-based report**
 stand in, clearly labeled *RULE PLAN* / *rule-based*. If Qwen returns unusable JSON, the same
 fallback is used for that task.
+
+## Object memory: seen vs. remembered vs. hidden
+
+STRIX-1 keeps a memory of every object of the prompt classes (plus cups, bowls, vases and wine glasses) that
+YOLO has seen. Each object is stored as a **direction from the drone** (azimuth/elevation from relative yaw,
+pitch, roll and the camera tilt) plus an estimated range, so it stays put in memory when the camera looks
+elsewhere.
+
+| State | Meaning | Shown as |
+|---|---|---|
+| **SEEN** | detected in the current frame | solid green in 3D, green box on the video |
+| **REMEMBERED** | out of view (the camera looks elsewhere) or not detected where expected, with a live *out of sight* timer | grey ghost in 3D, dashed grey box on the video when its spot is in view |
+| **HIDDEN** | disappeared where a container (cup, bowl …) covers it. It now **moves with that container** | orange, glowing *inside* the see-through cup in 3D; dashed orange box on the video |
+
+When the container is lifted and the object is there, the memory logs *"revealed after 22 s hidden under
+cup #2: memory was right"*. If it turns up somewhere else, it logs *"memory corrected"*. Qwen sees the
+memory in its observation (`MEMORY:` lines, `[REMEMBERED]` tag). In WATCH mode it announces hide, reveal and
+relocation events in the chat.
+
+**Send it to a remembered target.** Ask *"where is the ball?"*, *"go to the remembered target"* or *"aim at
+#4"*, or press **AIM** in the MEMORY tab. The `goto` skill tilts the camera to the remembered elevation and
+returns pilot advice ("Yaw left ~14° to face sports ball #4. It is ~0.7 m away"). It never moves the aircraft.
+
+Limits (shown in the UI): the drone is assumed to hold its position, relative yaw drifts until the IMU is
+calibrated, identical cups keep their identity only through continuous tracking (≥ 2 detections/s), and
+ranges are size-prior estimates (±30 %). Set `STRIX_DETECTOR_SIZE_PRIORS="sports ball=0.067"` for a tennis
+ball so its distance is right.
+
+**Demo:** in demo mode (`scripts/run_mock.sh`) the synthetic camera plays a 48-second *shell game*:
+1. a cup covers the ball;
+2. the cups are swapped twice;
+3. the camera can look away;
+4. the cup is lifted to check the memory.
+
+Switch scenes with the DEMO SCENE buttons in the MEMORY tab.
+
+### Why not Qwen-3D on the Pi?
+
+[Qwen-3D](https://huggingface.co/katefgroup/Qwen-3D) ([code](https://github.com/ll220/qwen3d)) is a
+3-billion-parameter 3D vision-language model. It needs a CUDA GPU, detectron2/pytorch3d, posed RGB-D input
+and PyTorch `.pth` weights, and there is no GGUF/llama.cpp build. It can't run on a Raspberry Pi 5 CPU, and
+the drone has no depth camera.
+
+STRIX-1 takes the same idea in a form that fits on the Pi:
+- a persistent, spatially grounded memory built from YOLO + IMU + servo;
+- the CaP-X-style "hidden object under cups" task ([CaP-X](https://arxiv.org/abs/2603.22435));
+- a live 3D view of what is seen versus remembered;
+- Qwen2.5-VL reasoning over that memory.
 
 ## Vision: Qwen looks at the camera
 
@@ -145,3 +197,4 @@ a closed-vocabulary detector, not open-vocabulary.
 - "Look up 15 degrees" / "center the camera".
 - "Is the IMU behaving normally?" → uses the deterministic IMU health checks.
 - "What are the temperature and humidity?"
+- "Where is the ball?" / "Send it to the remembered target" / "What do you remember?" → `goto` + `[REMEMBERED]` report.

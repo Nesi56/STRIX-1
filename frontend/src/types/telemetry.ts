@@ -147,6 +147,31 @@ export interface AgentState {
   step: number | null; error: string | null; watch?: boolean;
 }
 
+export type MemoryKind = "seen" | "remembered" | "hidden";
+
+export interface MemoryObject {
+  id: number; label: string; name: string;
+  state: "visible" | "out_of_view" | "occluded" | "hidden";
+  memory: MemoryKind;
+  container: boolean; contained_by: number | null; contained_by_name: string | null; contains: number[];
+  az: number; el: number; w_deg: number; h_deg: number;
+  range_m: number | null; range_kind: string;
+  xyz: [number, number, number];
+  first_seen: number; last_seen: number; out_of_sight_s: number; hidden_for_s: number | null;
+  confidence: number; projected_bbox: [number, number, number, number] | null; relocated_by_deg: number | null;
+}
+
+export interface MemoryEvent { ts: number; kind: string; text: string; track: number | null }
+
+export interface DemoScene { scene: "outdoor" | "cups"; t?: number; cycle_s?: number; phase?: string; ball_hidden?: boolean }
+
+export interface MemoryState {
+  seq: number; ts: number; objects: MemoryObject[]; events: MemoryEvent[];
+  counts: Record<MemoryKind, number>;
+  camera: { az: number; el: number; half_h: number; half_v: number };
+  frame: string; scene: DemoScene | null;
+}
+
 export interface LocalizationSource {
   id: string; name: string; kind: string; installed: boolean; running: boolean; validated: boolean;
   experimental: boolean; note: string; frame: string;
@@ -201,6 +226,7 @@ export interface TelemetryState {
   detections?: DetectionResult | null;
   detector?: DetectorState;
   agent?: AgentState;
+  memory?: MemoryState;
   recording: RecordingStatus | null;
 }
 

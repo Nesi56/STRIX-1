@@ -86,6 +86,8 @@ class TelemetryService:
         self._last_full = 0.0
         self._loop: asyncio.AbstractEventLoop | None = None
         self._last_det_seq = -1
+        self._last_mem_seq = -1
+        self._last_mem_t = 0.0
 
     def demo_mode(self) -> bool:
         c = self.c
@@ -98,6 +100,10 @@ class TelemetryService:
         if det is not None and det["seq"] != self._last_det_seq:
             self._last_det_seq = det["seq"]
             out["detections"] = det
+        now = time.time()
+        if c.memory.seq != self._last_mem_seq or now - self._last_mem_t >= 1.0:
+            self._last_mem_seq, self._last_mem_t = c.memory.seq, now
+            out["memory"] = c.memory.snapshot()
         return out
 
     def slow_part(self) -> dict[str, Any]:
@@ -123,6 +129,7 @@ class TelemetryService:
         """Full composite snapshot (used by the recorder and REST)."""
         snap = {"ts": time.time(), "demo_mode": self.demo_mode(), **self.fast_part(), **self.slow_part()}
         snap["detections"] = self.c.detector.latest()  # always include the newest result
+        snap["memory"] = self.c.memory.snapshot()
         return snap
 
     def recorder_snapshot(self) -> dict[str, Any]:

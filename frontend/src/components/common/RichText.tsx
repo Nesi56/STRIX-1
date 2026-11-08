@@ -2,9 +2,9 @@ import { Fragment, type ReactNode } from "react";
 import { Tag } from "./ui";
 
 const TAG_TONE: Record<string, "ok" | "warn" | "muted" | "cyan" | "blue" | "synth"> = {
-  MEASURED: "ok", DETECTED: "cyan", SEEN: "synth", DERIVED: "blue", INTERPRETATION: "warn", UNAVAILABLE: "muted", SUGGEST: "blue", HEALTH: "synth",
+  MEASURED: "ok", DETECTED: "cyan", SEEN: "synth", REMEMBERED: "warn", DERIVED: "blue", INTERPRETATION: "warn", UNAVAILABLE: "muted", SUGGEST: "blue", HEALTH: "synth",
 };
-const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[(?:MEASURED|DETECTED|SEEN|DERIVED|INTERPRETATION|UNAVAILABLE|HEALTH)\]|\bSUGGEST:)/g;
+const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[(?:MEASURED|DETECTED|SEEN|REMEMBERED|DERIVED|INTERPRETATION|UNAVAILABLE|HEALTH)\]|\bSUGGEST:)/g;
 
 function inline(text: string): ReactNode[] {
   return text.split(INLINE).filter(Boolean).map((part, i) => {

@@ -69,3 +69,11 @@ class VORequest(_Strict):
 
 class WatchRequest(_Strict):
     enabled: bool
+
+
+class MemoryAimRequest(_Strict):
+    target: str = Field(min_length=1, max_length=40, description="Remembered object: class name ('sports ball') or '#id'")
+
+
+class DemoSceneRequest(_Strict):
+    scene: Literal["outdoor", "cups"]

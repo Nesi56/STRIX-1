@@ -143,6 +143,15 @@ class Settings(BaseSettings):
     agent_image_px: int = Field(448, ge=224, le=1280)  # width of camera frames sent to a Qwen vision model
     vo_enabled: bool = False
 
+    # --- object memory (seen / remembered / hidden) ---
+    memory_ttl_s: float = Field(600.0, ge=10.0, le=86400.0)  # forget objects not seen for this long
+    memory_miss_frames: int = Field(3, ge=1, le=30)  # missed detections (in view) before "occluded"/"hidden"
+    memory_containers: str = "cup,bowl,vase,wine glass"  # classes that can hide other objects
+    # typical-size overrides for distance estimates, e.g. "sports ball=0.067,cup=0.11" (metres)
+    detector_size_priors: str = ""
+    # synthetic demo scene (STRIX_MOCK=true only): "outdoor" (people/car) or "cups" (shell game)
+    mock_scene: Literal["outdoor", "cups"] = "outdoor"
+
     # -------------------------------------------------------------- local Qwen
     qwen_enabled: bool = Field(True, validation_alias=_alias("QWEN_ENABLED", "qwen_enabled"))
     qwen_server_url: str = Field(

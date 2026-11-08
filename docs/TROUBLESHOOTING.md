@@ -95,6 +95,16 @@ Then run `scripts/verify_all.sh` (stop STRIX-1 first so the camera is free) and 
 | Prompt rejected | Only COCO-80 class names work (e.g. `person, car, dog, chair, bottle, cell phone`). |
 | Distances look wrong | Estimates assume a standing, fully visible object (person 1.7 m). Sitting people or cut-off boxes are farther/closer than shown. Check `STRIX_CAMERA_HFOV_DEG` (102 for Camera Module 3 *Wide*, ~66 for the standard module). |
 
+## Object memory
+
+| Symptom | Check / fix |
+|---|---|
+| Nothing appears in MEMORY | Only prompt classes plus containers (cup, bowl, vase, wine glass) are remembered, after 2 detections. Add the class in YOLO PROMPTS. |
+| Remembered objects slowly rotate around the drone | Relative yaw drifts until the IMU is calibrated: press **Calibrate** with the drone still and level. |
+| The ball isn't marked HIDDEN when covered | The cup must be detected as `cup` (or bowl/vase/wine glass) while the ball disappears behind it, so keep both in view. Real YOLO needs ≥ 2 detections/s; check the YOLO FPS. |
+| After shuffling, memory points at the wrong cup | Identical cups keep identity only through continuous tracking: shuffle slower (≈ 3 s per swap) or raise the detector rate. Lifting the right cup corrects the memory ("memory corrected" event). |
+| AIM / "where is the ball?" doesn't move the camera | Enable servo control (**E**). The servo only tilts: yaw the drone as the guidance says. |
+
 ## Power / thermals
 
 | Symptom | Check / fix |

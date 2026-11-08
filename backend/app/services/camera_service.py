@@ -294,6 +294,101 @@ class Picamera2Backend:
 # --------------------------------------------------------------------------
 # Synthetic camera (demo/testing). Every frame is stamped SYNTHETIC.
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# Synthetic "shell game" table-top scene (demo of object memory / containment)
+# --------------------------------------------------------------------------
+CUP_H = 0.10           # m, matches the "cup" size prior
+CUP_R_RIM = 0.045      # cups stand upside down: the rim is on the table
+CUP_R_BASE = 0.032
+BALL_D = 0.06          # table-tennis/tennis-sized ball
+TABLE_CAM_H = 0.30     # camera height above the table top
+CUP_SLOTS = (-0.18, 0.0, 0.18)
+CUP_Z = 0.75
+BALL_HOME = (0.0, 0.58)
+CUPS_CYCLE_S = 48.0
+CUPS_PHASES = (
+    (5.0, "ball in front of the middle cup"),
+    (9.0, "a cup is placed over the ball"),
+    (13.0, "the ball is hidden under a cup"),
+    (19.0, "shuffling the cups"),
+    (30.0, "where is the ball? (it is under one of the cups)"),
+    (35.0, "lifting the cup: reveal"),
+    (CUPS_CYCLE_S, "resetting"),
+)
+
+
+def _ease(s: float) -> float:
+    s = 0.0 if s < 0 else 1.0 if s > 1 else s
+    return s * s * (3 - 2 * s)
+
+
+def cups_scene(t: float) -> dict[str, Any]:
+    """Ground-truth state of the shell game at scene time ``t`` (seconds, cycles every 48 s).
+
+    Cups are identical; index 1 ("B") is the one that hides the ball. Positions are on the table in metres
+    (x right, z forward from the camera); ``lift`` is the height of a cup's rim above the table.
+    """
+    tc = t % CUPS_CYCLE_S
+    cups = [[x, CUP_Z, 0.0] for x in CUP_SLOTS]
+    A, B, C = 0, 1, 2
+
+    def seg(a: float, b: float) -> float:
+        return _ease((tc - a) / (b - a))
+
+    if tc >= 5:
+        cups[B][2] = 0.12 * seg(5, 6.5)
+    if tc >= 6.5:
+        cups[B][1] = CUP_Z + (BALL_HOME[1] - CUP_Z) * seg(6.5, 8)
+    if tc >= 8:
+        cups[B][2] = 0.12 * (1 - seg(8, 9))
+    if tc >= 9:
+        cups[B][1] = BALL_HOME[1] + (CUP_Z - BALL_HOME[1]) * seg(9, 11)
+
+    def swap(i: int, j: int, a: float, b: float, xi: float, xj: float) -> None:
+        s_ = seg(a, b)
+        arc = math.sin(math.pi * s_)
+        cups[i][0], cups[i][1] = xi + (xj - xi) * s_, CUP_Z - 0.2 * arc  # passes in front
+        cups[j][0], cups[j][1] = xj + (xi - xj) * s_, CUP_Z + 0.2 * arc  # passes behind
+
+    if tc >= 13:
+        swap(B, C, 13, 16, CUP_SLOTS[1], CUP_SLOTS[2])
+    if tc >= 16:
+        swap(B, A, 16, 19, CUP_SLOTS[2], CUP_SLOTS[0])
+    if tc >= 30:
+        cups[B][2] = 0.15 * seg(30, 31)
+    if tc >= 36.5:
+        cups[B][2] = 0.15 * (1 - seg(36.5, 37.5))
+
+    ball = list(BALL_HOME)
+    if 8 <= tc < 35:
+        ball = [cups[B][0], cups[B][1]]
+    elif 35 <= tc < 37.5:
+        ball = [cups[B][0], CUP_Z + (BALL_HOME[1] - CUP_Z) * seg(35, 36.5)]
+    elif tc >= 37.5:
+        ball = [CUP_SLOTS[0] + (BALL_HOME[0] - CUP_SLOTS[0]) * seg(37.5, 41), BALL_HOME[1]]
+    hidden_by = None
+    for i, (x, z, lift) in enumerate(cups):
+        if lift < 0.05 and math.hypot(x - ball[0], z - ball[1]) < 0.03:
+            hidden_by = i
+    phase = next(name for end, name in CUPS_PHASES if tc < end)
+    return {"t": tc, "cups": [tuple(c) for c in cups], "ball": tuple(ball), "ball_hidden_by": hidden_by, "phase": phase}
+
+
+def _clip_near(pts: list[tuple[float, float, float]], near: float = 0.05) -> list[tuple[float, float, float]]:
+    """Sutherland–Hodgman clip of a camera-space polygon (x, y, z) against the plane z = near."""
+    out: list[tuple[float, float, float]] = []
+    n = len(pts)
+    for i in range(n):
+        a, b = pts[i], pts[(i + 1) % n]
+        ina, inb = a[2] >= near, b[2] >= near
+        if ina:
+            out.append(a)
+        if ina != inb:
+            t = (near - a[2]) / (b[2] - a[2])
+            out.append((a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), near))
+    return out
+
+
 class MockCameraBackend:
     name = "mock-camera"
     synthetic = True
@@ -326,6 +421,20 @@ class MockCameraBackend:
         self._bg = None
         self._rng = random.Random(7)
         self._last_gt: tuple[int, int, list] | None = None
+        self._scene_t0 = time.monotonic()
+        self.scene_info: dict[str, Any] = {}
+
+    def restart_scene(self) -> None:
+        self._scene_t0 = time.monotonic()
+
+    def _read_pose(self) -> tuple[float, float, float | None, float]:
+        if not self._pose:
+            return 0.0, 0.0, None, 0.0
+        try:
+            p = self._pose()
+        except Exception:
+            return 0.0, 0.0, None, 0.0
+        return p[0], p[1], p[2], (p[3] if len(p) > 3 else 0.0)
 
     def _render_background(self, w: int, h: int):
         import cv2
@@ -395,26 +504,26 @@ class MockCameraBackend:
             cv2.circle(img, (int(wx), int(base - hp * 0.14)), max(2, int(hp * 0.16)), (25, 25, 25), -1)
 
     def _frame(self, t: float):
-        import cv2
+        roll, pitch, servo, yaw = self._read_pose()
+        sign = 1.0 if self.settings.servo_up_is_positive else -1.0
+        tilt = (servo - self.settings.servo_center_angle) * sign if servo is not None else 0.0
+        if self.settings.mock_scene == "cups":
+            view = self._frame_cups(time.monotonic() - self._scene_t0, roll, pitch + tilt, yaw)
+        else:
+            view = self._frame_outdoor(t, roll, pitch + tilt, yaw)
+        return self._hud(view)
 
+    def _frame_outdoor(self, t: float, roll: float, look_up: float, yaw: float):
         w, h = self.size
-        if self._bg is None or self._bg.shape[1] != int(w * 1.4):
+        if self._bg is None or self._bg.shape[1] != int(w * 1.4) or self._bg.shape[0] != int(h * 1.8):
             self._bg = self._render_background(w, h)
         bg = self._bg
         H, W = bg.shape[:2]
-        roll, pitch, servo = (0.0, 0.0, None)
-        if self._pose:
-            try:
-                roll, pitch, servo = self._pose()
-            except Exception:
-                pass
-        sign = 1.0 if self.settings.servo_up_is_positive else -1.0
-        tilt = (servo - self.settings.servo_center_angle) * sign if servo is not None else 0.0
         f = (w / 2.0) / math.tan(math.radians(self.settings.camera_hfov_deg) / 2.0)
         ppd = f * math.pi / 180.0
-        # Camera tilting up (servo) or nose-up (pitch) shows the upper part of the world.
-        cy = H / 2 - (tilt + pitch) * ppd
-        cx = W / 2 + 0.02 * W * math.sin(t * 0.07)
+        # Camera tilting up (servo) or nose-up (pitch) shows the upper part of the world; yawing right pans right.
+        cy = H / 2 - look_up * ppd
+        cx = W / 2 + yaw * ppd
         x0 = int(max(0, min(W - w, cx - w / 2)))
         y0 = int(max(0, min(H - h, cy - h / 2)))
         view = bg[y0 : y0 + h, x0 : x0 + w].copy()
@@ -432,11 +541,111 @@ class MockCameraBackend:
                 self._draw_car(view, ox, base, hp)
                 box = (ox - hp * 1.3, base - hp, hp * 2.6, hp)
             gt.append((label, conf, box))
+        self.scene_info = {"scene": "outdoor"}
+        return self._roll_and_publish_gt(view, gt, roll, w, h)
+
+    def _roll_and_publish_gt(self, view, gt, roll: float, w: int, h: int):
+        import cv2
+
         M = None
         if abs(roll) > 0.01:
-            M = cv2.getRotationMatrix2D((w / 2, h / 2), -roll, 1.0)
+            # Rolling right (right side down) makes the world appear rotated counter-clockwise.
+            M = cv2.getRotationMatrix2D((w / 2, h / 2), roll, 1.0)
             view = cv2.warpAffine(view, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
         self._last_gt = (w, h, self._project_gt(gt, M, w, h))
+        return view
+
+    # ------------------------------------------------------------ cups scene
+    def _frame_cups(self, t: float, roll: float, look_up: float, yaw: float):
+        import cv2
+        import numpy as np
+
+        w, h = self.size
+        f = (w / 2.0) / math.tan(math.radians(self.settings.camera_hfov_deg) / 2.0)
+        cyw, syw = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+        ct, st = math.cos(math.radians(look_up)), math.sin(math.radians(look_up))
+
+        def cam(X: float, Y: float, Z: float) -> tuple[float, float, float]:
+            xc, zc, yc = X * cyw - Z * syw, X * syw + Z * cyw, Y - TABLE_CAM_H
+            return xc, -zc * st + yc * ct, zc * ct + yc * st
+
+        def img(p: tuple[float, float, float]) -> tuple[float, float]:
+            return w / 2 + f * p[0] / p[2], h / 2 - f * p[1] / p[2]
+
+        # wall with a soft vertical gradient, then the table top
+        if self._bg is None or self._bg.shape[:2] != (h, w):
+            ramp = np.linspace(0, 1, h, dtype=np.float32)[:, None]
+            wall = np.array([200, 190, 178], np.float32) * (1 - 0.25 * ramp)
+            self._bg = np.repeat(wall[:, None, :], w, axis=1).astype(np.uint8)
+        view = self._bg.copy()
+        table = _clip_near([cam(-1.2, 0, 0.2), cam(1.2, 0, 0.2), cam(1.2, 0, 2.4), cam(-1.2, 0, 2.4)])
+        if len(table) >= 3:
+            cv2.fillPoly(view, [np.array([img(p) for p in table], np.int32)], (58, 96, 140), cv2.LINE_AA)
+            for x in np.arange(-1.2, 1.21, 0.3):  # planks
+                seg = _clip_near([cam(x, 0, 0.2), cam(x, 0, 2.4), cam(x, 0, 2.4)])
+                if len(seg) >= 2:
+                    a, b = img(seg[0]), img(seg[1])
+                    cv2.line(view, (int(a[0]), int(a[1])), (int(b[0]), int(b[1])), (48, 80, 120), 2, cv2.LINE_AA)
+        st_ = cups_scene(t)
+        items = [("cup", c[0], c[1], c[2]) for c in st_["cups"]]
+        if st_["ball_hidden_by"] is None:
+            items.append(("sports ball", st_["ball"][0], st_["ball"][1], 0.0))
+        items.sort(key=lambda it: -cam(it[1], 0.05, it[2])[2])  # far → near
+        gt = []
+        for label, X, Z, lift in items:
+            if label == "cup":
+                base_c, top_c = cam(X, lift, Z), cam(X, lift + CUP_H, Z)
+                if base_c[2] < 0.05 or top_c[2] < 0.05:
+                    continue
+                (bx, by), (tx, ty) = img(base_c), img(top_c)
+                rb, rt = f * CUP_R_RIM / base_c[2], f * CUP_R_BASE / top_c[2]
+                if lift > 0.005:  # shadow of a lifted cup
+                    sc = cam(X, 0, Z)
+                    if sc[2] > 0.05:
+                        sx, sy = img(sc)
+                        cv2.ellipse(view, (int(sx), int(sy)), (int(rb), max(1, int(rb * 0.3))), 0, 0, 360, (40, 66, 98), -1, cv2.LINE_AA)
+                poly = np.array([(bx - rb, by), (bx + rb, by), (tx + rt, ty), (tx - rt, ty)], np.int32)
+                cv2.fillPoly(view, [poly], (40, 40, 190), cv2.LINE_AA)
+                cv2.ellipse(view, (int(tx), int(ty)), (int(rt), max(1, int(rt * 0.3))), 0, 0, 360, (30, 30, 140), -1, cv2.LINE_AA)
+                cv2.line(view, (int(bx - rb * 0.5), int(by - 2)), (int(tx - rt * 0.5), int(ty + 2)), (120, 120, 240), max(1, int(rb * 0.15)), cv2.LINE_AA)
+                x0, x1 = min(bx - rb, tx - rt), max(bx + rb, tx + rt)
+                y0, y1 = min(by, ty), max(by, ty)
+                gt.append((label, 0.9, (x0, y0, x1 - x0, y1 - y0), base_c[2]))
+            else:
+                c = cam(X, BALL_D / 2, Z)
+                if c[2] < 0.05:
+                    continue
+                cx_, cy_ = img(c)
+                r = f * (BALL_D / 2) / c[2]
+                cv2.circle(view, (int(cx_), int(cy_)), max(2, int(r)), (30, 140, 245), -1, cv2.LINE_AA)
+                cv2.circle(view, (int(cx_ - r * 0.3), int(cy_ - r * 0.3)), max(1, int(r * 0.3)), (170, 220, 255), -1, cv2.LINE_AA)
+                gt.append((label, 0.86, (cx_ - r, cy_ - r, 2 * r, 2 * r), c[2]))
+        # drop objects mostly covered by nearer ones (as a detector would miss them)
+        visible = []
+        for i, (label, conf, box, depth) in enumerate(gt):
+            x, y, bw, bh = box
+            area = max(1e-6, bw * bh)
+            covered = 0.0
+            for label2, _, b2, d2 in gt[i + 1:]:
+                if d2 >= depth:
+                    continue
+                ix = max(0.0, min(x + bw, b2[0] + b2[2]) - max(x, b2[0]))
+                iy = max(0.0, min(y + bh, b2[1] + b2[3]) - max(y, b2[1]))
+                covered = max(covered, ix * iy / area)
+            if covered < 0.6:
+                visible.append((label, conf, box))
+        self.scene_info = {"scene": "cups", "t": round(st_["t"], 1), "cycle_s": CUPS_CYCLE_S, "phase": st_["phase"],
+                           "ball_hidden": st_["ball_hidden_by"] is not None}
+        view = self._roll_and_publish_gt(view, visible, roll, w, h)
+        fs = max(0.5, h / 900)
+        cv2.putText(view, f"DEMO SHELL GAME {st_['t']:4.1f}/{CUPS_CYCLE_S:.0f}s: {st_['phase']}", (int(12 * fs), h - int(18 * fs)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.75 * fs, (20, 20, 20), max(1, int(2 * fs)), cv2.LINE_AA)
+        return view
+
+    def _hud(self, view):
+        import cv2
+
+        h, w = view.shape[:2]
         noise = self._rng.randint(0, 3)
         if noise:
             view = cv2.add(view, noise)
@@ -471,6 +680,10 @@ class MockCameraBackend:
     def ground_truth(self):
         """(frame_w, frame_h, [(label, confidence, (x, y, w, h))]) for the latest synthetic frame."""
         return self._last_gt
+
+    def size_priors(self) -> dict[str, float]:
+        """True object sizes of the synthetic scene (so demo distances are consistent)."""
+        return {"cup": CUP_H, "sports ball": BALL_D} if self.settings.mock_scene == "cups" else {}
 
     def _run(self, stop: threading.Event) -> None:
         import cv2
@@ -704,6 +917,32 @@ class CameraService:
         """Synthetic camera only: object boxes for the latest frame (None on real hardware)."""
         b = self._backend
         return b.ground_truth() if b is not None and hasattr(b, "ground_truth") else None
+
+    def scene_size_priors(self) -> dict[str, float]:
+        b = self._backend
+        return b.size_priors() if b is not None and hasattr(b, "size_priors") else {}
+
+    @property
+    def is_synthetic(self) -> bool:
+        return bool(self._backend is not None and self._backend.synthetic)
+
+    def scene(self) -> dict[str, Any] | None:
+        """Synthetic demo scene state (None on real hardware)."""
+        b = self._backend
+        if b is None or not b.synthetic:
+            return None
+        return {"scene": self.settings.mock_scene, **getattr(b, "scene_info", {})}
+
+    def set_scene(self, name: str) -> dict[str, Any]:
+        b = self._backend
+        if b is None or not b.synthetic:
+            raise CameraError("demo scenes exist only for the synthetic camera (STRIX_MOCK=true)")
+        if name not in ("outdoor", "cups"):
+            raise CameraError("scene must be 'outdoor' or 'cups'")
+        self.settings.mock_scene = name  # type: ignore[assignment]
+        b.restart_scene()
+        self.events.add("info", "camera", f"synthetic demo scene: {name}")
+        return {"scene": name}
 
     def analysis_frame(self):
         """BGR frame (≈640 px wide) for vision. Call from a worker thread only."""

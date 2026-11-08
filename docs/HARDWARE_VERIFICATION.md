@@ -36,6 +36,8 @@ you validate.
 | Distance / bearing estimates | ✅ geometry tests; synthetic scene | compare with a tape measure at 2/4/8 m | |
 | Qwen agent: plan → servo skills → report | ✅ simulated llama-server (JSON schema), keyword planner, tracking in the synthetic scene | plan quality and latency with the real model | |
 | Keyboard servo control, e-stop | ✅ browser test | real servo direction (`STRIX_SERVO_UP_IS_POSITIVE`) | |
+| Object memory (seen / remembered / hidden, containment, timers) | ✅ unit tests + synthetic shell game at 2–10 detector FPS (correct cup after two swaps, reveal confirms) + browser | real cups and a ball with YOLO on the Pi: hide/shuffle/reveal at your detector FPS | |
+| Send to remembered target (`goto`, AIM) | ✅ API + agent test, browser | servo aim accuracy on the real mount | |
 | Monocular VO | ✅ rendered 3D scene recovers direction | real camera (lens distortion, motion blur) | |
 | Recording, playback, CSV/JSON export, retention | ✅ tests + browser | SD-card write load over long sessions | |
 | Local Qwen via llama-server | ✅ protocol against a simulated server (SSE, timings, /health 503, /props) | build, load time, tokens/s, memory | |
@@ -56,6 +58,9 @@ you validate.
 7. `scripts/verify_servo.py` with external 5 V; then set safe limits in Settings.
 8. Qwen: `curl 127.0.0.1:8080/health`, then run the judge demo tasks; note plan/report time.
 9. Detector: stand at a measured 3 m and 6 m; compare the `~X m` labels (expect ±30 %).
-10. Pull the IMU connector while running → *disconnected* within ~1 s, other panels keep
+10. Memory: put three cups and a small ball on a table ~0.7 m in front of the camera, set prompts to
+    `cup, sports ball`, hide the ball under a cup, shuffle slowly, look away (**W**) and back, then ask
+    "where is the ball?" and lift the cup. Note whether the memory was right.
+11. Pull the IMU connector while running → *disconnected* within ~1 s, other panels keep
     working; reconnect → recovers within ~5 s.
 11. Turn Wi-Fi off/on on the laptop → banner, then automatic recovery.

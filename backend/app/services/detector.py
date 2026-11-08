@@ -108,15 +108,32 @@ def focal_px(width: int, hfov_deg: float) -> float:
     return (width / 2.0) / math.tan(math.radians(hfov_deg) / 2.0)
 
 
+def parse_size_priors(text: str) -> dict[str, float]:
+    """Parse "sports ball=0.067, cup=0.11" into {label: metres}; unknown labels and bad values are ignored."""
+    out: dict[str, float] = {}
+    for part in (text or "").split(","):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        label = normalize_label(k)
+        try:
+            val = float(v)
+        except ValueError:
+            continue
+        if label in COCO80 and 0.005 <= val <= 50:
+            out[label] = val
+    return out
+
+
 def estimate_geometry(label: str, box_px: tuple[float, float, float, float], frame_w: int, frame_h: int,
-                      hfov_deg: float) -> tuple[float | None, str, float, float]:
+                      hfov_deg: float, priors: dict[str, float] | None = None) -> tuple[float | None, str, float, float]:
     """Return (distance_m, kind, bearing_deg, elevation_deg) for a pixel box (x, y, w, h)."""
     x, y, w, h = box_px
     f = focal_px(frame_w, hfov_deg)
     cx, cy = x + w / 2.0, y + h / 2.0
     bearing = math.degrees(math.atan((cx - frame_w / 2.0) / f))
     elevation = math.degrees(math.atan((frame_h / 2.0 - cy) / f))
-    prior = SIZE_PRIORS_M.get(label)
+    prior = (priors or SIZE_PRIORS_M).get(label)
     if prior is None or h < 4:
         return None, "none", bearing, elevation
     dist = f * prior / h

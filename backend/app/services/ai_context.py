@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-SKILLS = ["look", "tilt", "center", "scan", "find", "track", "wait"]
+SKILLS = ["look", "tilt", "center", "scan", "find", "track", "goto", "wait"]
 
 
 def _f(v: Any, nd: int = 1, unit: str = "") -> str:
@@ -57,11 +57,31 @@ def observe(c: Any) -> dict[str, Any]:
             "min_tilt": (sv.min_angle - sv.center_angle) * sv.up_sign, "max_tilt": (sv.max_angle - sv.center_angle) * sv.up_sign,
         },
         "detections": dets,
+        "memory": _memory(c),
         "detector": c.detector.engine_kind,
         "prompts": list(c.detector.prompts),
         "system": {"cpu": sysm.get("cpu_percent"), "cpu_temp": sysm.get("cpu_temp_c"),
                    "warnings": [w["message"] for w in sysm.get("warnings", [])]},
     }
+
+
+def _memory(c: Any) -> dict[str, Any]:
+    mem = getattr(c, "memory", None)
+    if mem is None:
+        return {"lines": [], "objects": [], "camera": None}
+    snap = mem.snapshot()
+    return {"lines": mem.summary_lines(), "objects": snap["objects"], "camera": snap["camera"]}
+
+
+def remembered_targets(o: dict[str, Any]) -> list[str]:
+    """Labels in memory that are not in view now: hidden first, then non-containers, most recently seen first."""
+    objs = [m for m in o.get("memory", {}).get("objects", []) if m["memory"] != "seen"]
+    objs.sort(key=lambda m: (m["memory"] != "hidden", m["container"], -m["last_seen"]))
+    out: list[str] = []
+    for m in objs:
+        if m["label"] not in out:
+            out.append(m["label"])
+    return out
 
 
 def describe_detection(d: dict[str, Any]) -> str:
@@ -107,6 +127,10 @@ def observation_text(o: dict[str, Any]) -> str:
             L.append(f"  - {describe_detection(d)}")
     else:
         L.append(f"OBJECTS [{o['detector']} detector]: none detected")
+    mem = o.get("memory") or {}
+    if mem.get("lines"):
+        L.append("MEMORY [object permanence; az/el = direction from the drone, az + right, el + up; SEEN = in view now]:")
+        L.extend(f"  - {line}" for line in mem["lines"])
     for w in o["system"]["warnings"]:
         L.append(f"SYSTEM WARNING: {w}")
     L.append("UNAVAILABLE: GPS/position, altitude, ground speed, compass heading, battery level.")
@@ -122,7 +146,17 @@ def suggestions(o: dict[str, Any], target: str | None, standoff_m: float) -> lis
         cands = [d for d in dets if d["label"] == target]
         pick = cands[0] if cands else None
         if pick is None:
-            out.append(f"No {target} detected — rotate the drone slowly or run a camera scan; check lighting.")
+            mem = [m for m in (o.get("memory") or {}).get("objects", []) if m["label"] == target]
+            cam = (o.get("memory") or {}).get("camera")
+            if mem and cam:
+                m = max(mem, key=lambda m: m["last_seen"])
+                daz = (m["az"] - cam["az"] + 180) % 360 - 180
+                where = f"hidden under {m['contained_by_name']}" if m["memory"] == "hidden" else f"out of sight {m['out_of_sight_s']:.0f} s"
+                turn = f"yaw {'right' if daz > 0 else 'left'} ~{abs(daz):.0f}°" if abs(daz) > 5 else "the heading is already aligned"
+                out.append(f"The {target} is not in view but remembered ({m['name']}, {where}): {turn}; "
+                           "ask Qwen to go to it to aim the camera.")
+            else:
+                out.append(f"No {target} detected — rotate the drone slowly or run a camera scan; check lighting.")
     elif dets:
         prompted = [d for d in dets if d["label"] in o["prompts"]] or dets
         with_range = [d for d in prompted if d.get("distance_m") is not None]
@@ -170,15 +204,21 @@ Skills (tilt is in degrees relative to level; + is up, - is down):
 - {"skill":"scan"}                     sweep the tilt range and record what is seen
 - {"skill":"find","target":"person"}   sweep until that object class is detected
 - {"skill":"track","target":"person","seconds":8}  keep that object vertically centered
+- {"skill":"goto","target":"sports ball"}  aim the camera at an object from MEMORY, even when it is out of view
+                                          or HIDDEN under a cup (target may also be an id like "#4")
 - {"skill":"wait","seconds":2}
 Rules: at most 5 steps; use an empty plan [] for questions that need no camera motion;
-targets must be detector classes such as person, car, dog, chair, bottle.
+targets must be detector classes such as person, car, dog, chair, bottle, cup, sports ball.
+Use goto for objects listed in MEMORY that are not SEEN now; it also gives the pilot yaw advice.
 
 Examples:
 TASK: look up a bit -> {"thought":"tilt up 15 degrees","target":"","plan":[{"skill":"tilt","delta":15}]}
 TASK: move the servo please -> {"thought":"no direction given, tilt up 20 degrees","target":"","plan":[{"skill":"tilt","delta":20}]}
 TASK: look at the floor -> {"thought":"point the camera down","target":"","plan":[{"skill":"look","tilt":-45}]}
 TASK: find the person and keep them in view -> {"thought":"locate then track","target":"person","plan":[{"skill":"find","target":"person"},{"skill":"track","target":"person","seconds":8}]}
+TASK: where is the ball? -> {"thought":"the ball is in memory, aim at it","target":"sports ball","plan":[{"skill":"goto","target":"sports ball"}]}
+TASK: send it to the remembered target -> {"thought":"aim at the remembered object","target":"sports ball","plan":[{"skill":"goto","target":"sports ball"}]}
+TASK: what do you remember? -> {"thought":"answer from memory","target":"","plan":[]}
 TASK: how warm is it? -> {"thought":"question only","target":"","plan":[]}"""
 
 PLAN_SCHEMA = {
@@ -213,15 +253,18 @@ Answer the TASK using ONLY the data provided (and the camera IMAGE if one is att
 - [SEEN] what you can identify in the attached camera image (objects, people, text, colours). Only if an image is attached.
 - [DETECTED] YOLO objects with estimated distance and direction (estimates are ±30 %).
 - [MEASURED] sensor values you rely on (IMU, DHT11) with their numbers.
+- [REMEMBERED] objects from MEMORY that are not in view: where they were, how long they have been out of sight,
+  and HIDDEN ones inside which container (e.g. "the ball is HIDDEN under cup #2 for 14 s").
 - What the camera did, from the ACTION LOG.
 - SUGGEST: lines with how to move or complete the task — reuse the PILOT SUGGESTIONS.
 Mark your own guesses [INTERPRETATION] and missing data [UNAVAILABLE]. If data is SYNTHETIC say so.
 Never invent positions, GPS, altitude or battery levels. No code, no shell commands."""
 
-WATCH_PROMPT = """You are the camera-operator AI of a small drone. The YOLO detector just reported new objects.
-Reply in at most 2 short sentences: what was detected (with estimated distance and direction) and one
-"SUGGEST:" line for the pilot. If a camera IMAGE is attached, add what you identify in it marked [SEEN].
-Do not invent anything that is not in the data or the image. No code."""
+WATCH_PROMPT = """You are the camera-operator AI of a small drone. The YOLO detector or the object MEMORY just reported
+an EVENT (new objects, or an object hidden under / revealed from a container, or found somewhere else).
+Reply in at most 2 short sentences: what happened (with estimated distance and direction; for memory events say which
+container hides what and for how long, tagged [REMEMBERED]) and one "SUGGEST:" line for the pilot. If a camera IMAGE is
+attached, add what you identify in it marked [SEEN]. Do not invent anything that is not in the data or the image. No code."""
 
 _VISUAL_RE = None
 
@@ -273,6 +316,9 @@ def deterministic_report(o: dict[str, Any], task: str, actions: list[str], sugg:
         lines.append(f"- [DETECTED] {describe_detection(d)}")
     if not o["detections"]:
         lines.append("- [DETECTED] no objects in view")
+    for line in (o.get("memory") or {}).get("lines", []):
+        if ": SEEN now" not in line:
+            lines.append(f"- [REMEMBERED] {line}")
     for a in actions:
         lines.append(f"- Camera: {a}")
     if is_visual(task):

@@ -42,6 +42,7 @@ from app.services.ai_context import (
     is_visual,
     observation_text,
     observe,
+    remembered_targets,
     suggestions,
 )
 from app.services.ai_qwen_service import LLMError
@@ -69,13 +70,16 @@ def _num(v: Any, lo: float, hi: float, default: float) -> float:
     return max(lo, min(hi, x))
 
 
-def rule_plan(task: str, vocabulary: list[str], current_tilt: float = 0.0) -> tuple[str, list[dict[str, Any]], str]:
+def rule_plan(task: str, vocabulary: list[str], current_tilt: float = 0.0,
+              remembered: list[str] | None = None) -> tuple[str, list[dict[str, Any]], str]:
     """Keyword planner used when Qwen is offline (or returned an unusable plan).
 
     Returns (target_class, plan, note). The note explains choices such as a default
-    direction, or why a request cannot be done with a tilt-only servo.
+    direction, or why a request cannot be done with a tilt-only servo. ``remembered`` lists
+    object classes that are in memory but not in view (most relevant first).
     """
     t = task.lower()
+    remembered = remembered or []
     target = ""
     words = re.findall(r"[a-z]+", t)
     for n in (2, 1):
@@ -100,6 +104,17 @@ def rule_plan(task: str, vocabulary: list[str], current_tilt: float = 0.0) -> tu
     down = re.search(r"\b(down|downward|downwards|lower|floor|ground|below|feet)\b", t)
     sideways = re.search(r"\b(left|right|pan|yaw|sideways)\b", t)
 
+    mid = re.search(r"#\s?(\d+)", t)
+    goto_words = re.search(r"\b(where is|where's|where are|go to|go back|send|aim|point at|look at|show me|return to|"
+                           r"back to|remembered|memory|hidden|last seen|find)\b", t)
+    if mid and goto_words:
+        return target, [{"skill": "goto", "target": f"#{mid.group(1)}"}], ""
+    if target and target in remembered and goto_words:
+        return target, [{"skill": "goto", "target": target}], ""
+    if not target and remembered and not up and not down \
+            and re.search(r"\b(remembered|memory|hidden|last seen)\b|\b(send|go|aim)\b.*\b(it|target|there)\b", t) \
+            and not re.search(r"\bwhat\b.*\b(remember|memory)\b", t):
+        return remembered[0], [{"skill": "goto", "target": remembered[0]}], f"Remembered target: {remembered[0]}."
     if re.search(r"\b(track|follow|keep\b.*\b(view|centered|centred|frame))", t) and target:
         return target, [{"skill": "find", "target": target}, {"skill": "track", "target": target, "seconds": 8}], ""
     if re.search(r"\b(find|look for|search|where is|where are|locate|spot)\b", t) and target:
@@ -145,6 +160,7 @@ class AgentService:
         self.watch_enabled = bool(getattr(c.settings, "agent_watch", True))
         self._watch_task: asyncio.Task | None = None
         self._comment_task: asyncio.Task | None = None
+        self._mem_ev_ts = time.time()
         self.last_watch: dict[str, Any] | None = None
         self._plan_note = ""
 
@@ -227,6 +243,12 @@ class AgentService:
                 if sk == "track":
                     d["seconds"] = _num(step.get("seconds"), 2, 30, 8)
                 out.append(d)
+            elif sk == "goto":
+                raw_t = str(step.get("target", "")).strip()
+                m = re.fullmatch(r"#\s?(\d+)", raw_t)
+                lab = f"#{m.group(1)}" if m else normalize_label(raw_t, vocab)
+                if lab:
+                    out.append({"skill": "goto", "target": lab})
             elif sk == "wait":
                 out.append({"skill": "wait", "seconds": _num(step.get("seconds"), 0.2, 10, 1)})
             else:
@@ -251,17 +273,25 @@ class AgentService:
                 plan = self._validate_plan(data.get("plan") or [])
                 target = normalize_label(str(data.get("target", "")), self.c.detector.vocabulary) or ""
                 if not target:
-                    target = next((p["target"] for p in plan if "target" in p), "")
+                    target = next((p["target"] for p in plan if "target" in p and not p["target"].startswith("#")), "")
                 return "qwen", str(data.get("thought", ""))[:200], target, plan, stats
             except LLMError as exc:
                 log.warning("Qwen planning failed, using rule planner: %s", exc)
-                target, raw, note = rule_plan(task, self.c.detector.vocabulary, self.c.servo.tilt_deg() or 0.0)
+                target, raw, note = rule_plan(task, self.c.detector.vocabulary, self.c.servo.tilt_deg() or 0.0,
+                                              self._remembered())
                 self._plan_note = note
                 return "rules", f"Qwen planning failed ({exc.code}); keyword planner used. {note}".strip(), target, self._validate_plan(raw), {}
-        target, raw, note = rule_plan(task, self.c.detector.vocabulary, self.c.servo.tilt_deg() or 0.0)
+        target, raw, note = rule_plan(task, self.c.detector.vocabulary, self.c.servo.tilt_deg() or 0.0, self._remembered())
         self._plan_note = note
         state = "not running (run scripts/setup_ai.sh)" if q.state == "unreachable" else q.state
         return "rules", f"Qwen {state} — keyword planner used. {note}".strip(), target, self._validate_plan(raw), {}
+
+    def _remembered(self) -> list[str]:
+        mem = getattr(self.c, "memory", None)
+        if mem is None:
+            return []
+        snap = mem.snapshot()
+        return remembered_targets({"memory": {"objects": snap["objects"]}})
 
     # ----------------------------------------------------------- skills
     async def _move(self, fn, *args) -> str | None:
@@ -361,6 +391,35 @@ class AgentService:
             summary = "; ".join(f"{lab} at tilt {t:+.0f}°" for lab, (t, _) in sorted(seen.items())) or "no objects"
             yield {"type": "result", "status": "done", "text": f"scan complete — {summary}"}
             return
+        if sk == "goto":
+            yield self._node("pilot")
+            mem = getattr(self.c, "memory", None)
+            info = mem.resolve(step["target"]) if mem else None
+            if info is None:
+                yield {"type": "result", "status": "failed", "text": f"goto: no {step['target']} in memory (it has not been seen yet)"}
+                return
+            if not sv.state()["available"] or not sv.armed:
+                why = "camera servo unavailable" if not sv.state()["available"] else \
+                    "servo control is disabled — enable it (E key) to let Qwen aim the camera"
+                yield {"type": "result", "status": "skipped", "text": f"goto {info['name']}: {why}"}
+                return
+            try:
+                res = mem.aim_at(step["target"])
+            except (KeyError, ServoError) as exc:
+                yield {"type": "result", "status": "skipped", "text": f"goto {info['name']}: {exc}"}
+                return
+            yield self._node("until")
+            t0 = time.monotonic()
+            while not sv.at_target() and time.monotonic() - t0 < self.s.agent_skill_timeout_s:
+                await self._sleep(POLL_S)
+            await self._fresh_detections(self._det_seq(), timeout=1.5)
+            now_info = mem.resolve(f"#{res['id']}") or info
+            state = {"visible": "SEEN now", "hidden": f"HIDDEN under {now_info['contained_by']}",
+                     "out_of_view": "not in view yet", "occluded": "not detected where remembered"}.get(now_info["state"], now_info["state"])
+            yield {"type": "result", "status": "done", "found": now_info["state"] == "visible",
+                   "text": f"aimed camera at remembered {res['target']} (tilt {res['tilt_deg']:+.0f}°, out of sight "
+                           f"{res['out_of_sight_s']:.0f} s) → {state}. " + " ".join(res["guidance"])}
+            return
         if sk == "track":
             target = step["target"]
             if not sv.armed or not sv.state()["available"]:
@@ -411,6 +470,7 @@ class AgentService:
             "scan": lambda: "scan the tilt range",
             "find": lambda: f"find {step.get('target')}",
             "track": lambda: f"track {step.get('target')} for {step.get('seconds', 8):.0f} s",
+            "goto": lambda: f"aim at remembered {step.get('target')}",
             "wait": lambda: f"wait {step.get('seconds', 1):.1f} s",
         }.get(sk, lambda: sk)()
 
@@ -457,10 +517,17 @@ class AgentService:
         pending: tuple | None = None
         pending_since = 0.0
         last_comment = 0.0
+        last_mem_comment = 0.0
+        self._mem_ev_ts = time.time()
         while True:
             await asyncio.sleep(1.0)
             try:
                 if not self.watch_enabled or self._running or (self._comment_task and not self._comment_task.done()):
+                    continue
+                ev = self._new_memory_event()
+                if ev and time.monotonic() - last_mem_comment >= 5.0:
+                    last_mem_comment = time.monotonic()
+                    self._comment_task = asyncio.create_task(self._comment([], ev))
                     continue
                 det = self.c.detector.latest()
                 if not det or time.time() - det["ts"] > 3.0:
@@ -485,13 +552,34 @@ class AgentService:
             except Exception:
                 log.exception("watch loop error")
 
-    async def _comment(self, dets: list[dict[str, Any]]) -> None:
+    MEMORY_EVENT_KINDS = ("hidden", "revealed", "relocated", "not_there")
+
+    def _new_memory_event(self) -> dict[str, Any] | None:
+        """Newest memory event worth a comment (an object hidden, revealed, relocated …) since the last check."""
+        mem = getattr(self.c, "memory", None)
+        if mem is None:
+            return None
+        evs = [e for e in mem.snapshot()["events"] if e["ts"] > self._mem_ev_ts]
+        if not evs:
+            return None
+        self._mem_ev_ts = max(e["ts"] for e in evs)
+        evs = [e for e in evs if e["kind"] in self.MEMORY_EVENT_KINDS]
+        return evs[-1] if evs else None
+
+    async def _comment(self, dets: list[dict[str, Any]], mem_event: dict[str, Any] | None = None) -> None:
         obs = observe(self.c)
         sugg = suggestions(obs, None, self.s.agent_standoff_m)
         provider, vision = "rules", False
-        text = deterministic_watch(dets, sugg, bool(obs["synthetic"]))
+        if mem_event:
+            tag = "[DETECTED]" if mem_event["kind"] == "revealed" else "[REMEMBERED]"
+            text = f"{tag} {mem_event['text'][0].upper()}{mem_event['text'][1:]}."
+            if mem_event["kind"] == "hidden":
+                text += " I'll keep following that container — ask \"where is it?\" any time."
+        else:
+            text = deterministic_watch(dets, sugg, bool(obs["synthetic"]))
         if self.c.qwen.state == "ready":
-            event = "EVENT: YOLO just detected: " + "; ".join(describe_detection(d) for d in dets[:5])
+            event = ("EVENT: object MEMORY: " + mem_event["text"]) if mem_event else \
+                "EVENT: YOLO just detected: " + "; ".join(describe_detection(d) for d in dets[:5])
             content, vision = await self._user_content(
                 f"{observation_text(obs)}\n\nPILOT SUGGESTIONS:\n" + ("\n".join(f"- {x}" for x in sugg) or "- none") + f"\n\n{event}", True)
             san = StreamingSanitizer()

@@ -12,6 +12,7 @@ if [ ! -f "$REPO/frontend/dist/index.html" ]; then
   echo "Dashboard not built yet: run 'cd frontend && npm ci && npm run build' (or use scripts/run_dev.sh)."
 fi
 export STRIX_MOCK=true
+export STRIX_MOCK_SCENE="${STRIX_MOCK_SCENE:-cups}"   # shell-game demo of the object memory; "outdoor" for people/car
 export STRIX_DATA_DIR="${STRIX_DATA_DIR:-$REPO/data/mock}"
 export STRIX_AUTH_TOKEN="${STRIX_AUTH_TOKEN:-demo-$(python3 -c 'import secrets;print(secrets.token_hex(4))')}"
 echo "STRIX-1 demo mode → http://localhost:${STRIX_PORT:-8000}   access token: ${STRIX_AUTH_TOKEN}"

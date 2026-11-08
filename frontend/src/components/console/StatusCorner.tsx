@@ -65,6 +65,9 @@ export function StatusCorner() {
       <Row label="SERVO" tone={!sv?.available ? "crit" : sv.armed ? "ok" : "dim"}
         value={sv?.available ? `${sv.armed ? "armed" : "safe (press E)"} · tilt ${signed(sv.tilt_deg, 0)}°` : "unavailable"}
         hint={!sv?.available ? sv?.status.error : null} />
+      <Row label="MEMORY" tone={st?.memory ? (st.memory.counts.hidden ? "warn" : "ok") : "dim"}
+        value={st?.memory ? `${st.memory.counts.seen} seen · ${st.memory.counts.remembered} rem. · ${st.memory.counts.hidden} hidden` : "—"}
+        title="Object memory: SEEN in view now, REMEMBERED out of sight, HIDDEN inside a cup/bowl" />
       <Row label="BATTERY" tone={battTone}
         value={pw?.undervoltage_now ? "UNDER-VOLTAGE" : `no fuel gauge${pw?.input_voltage_v != null ? ` · ${pw.input_voltage_v.toFixed(2)} V in` : ""}`}
         hint={`running ${fmtDuration(sys?.uptime_s)}${sys?.cpu_temp_c != null ? ` · CPU ${sys.cpu_temp_c.toFixed(0)} °C` : ""}`}

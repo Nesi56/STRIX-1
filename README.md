@@ -3,8 +3,9 @@
 STRIX-1 turns a **Raspberry Pi 5** on a 250 mm FPV quadcopter (SpeedyFPV ZMR250) into an AI camera
 operator. A **local Qwen vision model** looks at the camera image and **identifies** what it sees,
 reacts to **YOLO** detections, reads the **MPU6050** (motion) and **DHT11** (temperature/humidity),
-**aims the camera with a servo**, **estimates distances** and **suggests how to move**. Everything is
-on one screen in any browser on the same Wi-Fi; no VNC or monitor needed.
+**aims the camera with a servo**, **estimates distances**, **remembers objects it can no longer see —
+even a ball hidden under a shuffled cup —** and **suggests how to move**. Everything is on one screen in
+any browser on the same Wi-Fi; no VNC or monitor needed.
 
 > **Judges:** start with **[docs/JUDGES.md](docs/JUDGES.md)** for a 3-minute demo script.
 
@@ -36,6 +37,9 @@ on one screen in any browser on the same Wi-Fi; no VNC or monitor needed.
 |---|---|
 | **Qwen agent** | Plans with schema-constrained JSON (always valid, even for a 2–3 B model), then runs camera skills: `look`, `tilt`, `center`, `scan`, `find`, `track`, `wait`. It reports with `[SEEN]` / `[DETECTED]` / `[MEASURED]` / `SUGGEST:` tags. If Qwen is offline, a labeled keyword planner and rule-based report stand in. → [docs/AI.md](docs/AI.md) |
 | **Qwen vision** | With the Qwen2.5-VL model (`scripts/setup_ai.sh`), "identify this" / "what do you see" sends the current camera frame to Qwen, which describes it (`[SEEN]`). It is not limited to YOLO's 80 classes. |
+| **Object memory** | Every object is kept as a direction from the drone (IMU yaw/pitch/roll + servo tilt + image position) with an estimated range: **SEEN**, **REMEMBERED** (out of view / occluded, with an out-of-sight timer) or **HIDDEN** inside a cup or bowl, moving with it when the cups are shuffled. It re-identifies objects and corrects itself on reveal. → [docs/AI.md](docs/AI.md#object-memory-seen-vs-remembered-vs-hidden) |
+| **Live 3D memory world** | The drone (driven by the MPU6050) with its camera view cone and every remembered object. Hidden objects glow *inside* see-through cups. Dashed boxes on the video show remembered objects behind or under things. |
+| **Send to a remembered target** | "Where is the ball?" / AIM button → the `goto` skill tilts the camera back to the remembered object and tells the pilot how to yaw. The aircraft is never moved. |
 | **YOLO watch** | With WATCH ON, Qwen speaks up by itself when YOLO detects new objects: what, how far, which way, and a suggestion. |
 | **YOLO stream** | ONNX detector (YOLOX-S by default, YOLO11n/YOLOv8 supported) running continuously. Green boxes on the video show `person 0.88 · ~5.4 m`. Prompts choose the classes (COCO-80). |
 | **Distance & direction** | Pinhole model with typical object heights (HFOV 102°), labeled as estimates (±30 %). Bearing comes from image position; the radar shows a top-down view. |
@@ -43,7 +47,7 @@ on one screen in any browser on the same Wi-Fi; no VNC or monitor needed.
 | **Sensors** | MPU6050 at 100 Hz with a complementary filter (roll/pitch, *relative* yaw: no magnetometer), calibration and health checks. DHT11 through the Pi 5 kernel driver. |
 | **Manual control** | Keyboard: E enable, W/S or ↑/↓ tilt, C center, Space emergency stop, Esc stop agent. Speed and step sliders. |
 | **One-screen console** | Status corner (camera, YOLO, Qwen, MPU6050, DHT11, servo, battery/power) · manual controls · YOLO prompts · live video · 3D drone driven by the IMU · agent graph / radar / recordings tabs · Qwen chat. **Start recording** saves the camera video and all sensor data together. |
-| **Demo mode** | `STRIX_MOCK=true` gives a synthetic camera scene, IMU and DHT with ground-truth detections, all labeled **SYNTHETIC**. A missing real device shows *disconnected*, never fake data. |
+| **Demo mode** | `STRIX_MOCK=true` gives a synthetic camera (a **shell game** with three cups and a ball, or an outdoor scene), IMU and DHT with ground-truth detections, all labeled **SYNTHETIC**. A missing real device shows *disconnected*, never fake data. |
 
 ## Quick start (no hardware, any laptop)
 
@@ -53,8 +57,10 @@ cd frontend && npm ci && npm run build && cd ..        # Node ≥ 20.19
 scripts/run_mock.sh                                     # prints the access token
 ```
 
-Open <http://localhost:8000>, sign in with the token, press **E**, then ask the chat:
-*"Find the person and keep them centered"* or *"move the servo please"*.
+Open <http://localhost:8000> and sign in with the token. Watch the shell game: the ball goes under a cup and
+the cups are shuffled. Press **E**, then **W** a few times to look away, and ask the chat
+*"where is the ball?"*. For the person-tracking demo, switch the DEMO SCENE to **Outdoor** and ask
+*"Find the person and keep them centered"*.
 
 ## On the Raspberry Pi 5
 
@@ -88,13 +94,15 @@ Never power the servo from a GPIO pin. Check the 52Pi PD board's 5 V rating befo
 
 ```
 backend/app/services/  agent_service (Qwen agent) · ai_context (grounding, suggestions, prompts) · ai_qwen_service
+                       memory_service (object memory: seen / remembered / hidden, containment)
                        detector_service + detector (YOLO/YOLOX/HOG, distance) · camera_service · imu_service
                        dht_service · servo_service · telemetry_service · recording_service · system_monitor
                        mapping_service (localization status, experimental VO) · container
 backend/app/api/       api.py (REST) · websocket.py · auth.py · network_guard.py
 backend/tests/         pytest suite (demo mode, simulated llama-server)
-frontend/src/          console UI: components/console/* (TopBar, ManualControls, PromptsPanel, VideoFeed,
-                       AgentGraph, RadarView, SensorData, ChatPanel), React Three Fiber 3D, Recharts
+frontend/src/          console UI: components/console/* (TopBar, StatusCorner, ManualControls, PromptsPanel,
+                       VideoFeed, DronePanel, MemoryTab, AgentGraph, RadarView, RecordingsTab, ChatPanel),
+                       components/memory/WorldScene (live 3D memory), React Three Fiber, Recharts
 scripts/               install, run, verification, detector model, llama.cpp/Qwen helpers
 config/ docs/          systemd units, boot overlay block · setup, hardware, AI, API, judge guide
 ```
@@ -107,6 +115,7 @@ scripts/run_tests.sh      # backend pytest + frontend typecheck, vitest, product
 
 The tests cover:
 - agent planning, validation, servo skills, tracking, emergency stop and the offline fallback (simulated llama-server)
+- object memory: hide/carry/reveal, out of view vs. occluded, re-identification, the synthetic shell game at 2–4 detector FPS, `goto`
 - YOLOv8/YOLOX decoding, NMS, distance geometry and prompts
 - sensor parsing, orientation filter, calibration and servo limits
 - auth, WebSocket and REST validation
@@ -128,6 +137,7 @@ Built and tested without the physical drone (x86-64 Linux, demo mode, headless b
 - the YOLO11n export path
 - `scripts/setup_ai.sh` end to end, and Qwen-VL image latency on the Pi 5 CPU
 - the servo tilt direction (`STRIX_SERVO_UP_IS_POSITIVE`)
+- the object memory with real cups, a real ball and real YOLO on the Pi (verified here only with the synthetic shell game)
 - the 52Pi board's servo power capacity
 
 ## Documentation

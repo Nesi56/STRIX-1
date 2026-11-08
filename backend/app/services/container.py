@@ -21,6 +21,7 @@ from app.services.dht_service import DHTService
 from app.services.hub import EventLog
 from app.services.imu_service import IMUService
 from app.services.mapping_service import MappingService
+from app.services.memory_service import MemoryService
 from app.services.recording_service import RecordingService
 from app.services.servo_service import ServoService
 from app.services.system_monitor import SystemMonitor
@@ -45,17 +46,39 @@ class Container:
                                           self.telemetry.demo_mode)
         self.mapping = MappingService(settings, self.camera, self.events)
         self.detector = DetectorService(settings, self.camera, self.events, self.db,
-                                        session_id=lambda: (self.recording.active_session or {}).get("id"))
+                                        session_id=lambda: (self.recording.active_session or {}).get("id"),
+                                        pose=self.camera_pose_now)
         self.qwen = QwenService(settings, self.events, register_process=self.system.register_process)
+        self.memory = MemoryService(self)
         self.agent = AgentService(self)
         self.events.listeners.append(self.telemetry.broadcast_event)
         self.started = False
 
-    def _camera_pose(self) -> tuple[float, float, float | None]:
-        """Pose hint for the synthetic camera only (makes the demo feed react)."""
-        latest = self.imu.latest()
-        o = (latest or {}).get("orientation") or {}
-        return o.get("roll", 0.0), o.get("pitch", 0.0), self.servo.current
+    def _camera_pose(self) -> tuple[float, float, float | None, float]:
+        """Pose for rendering the synthetic camera only: roll, pitch, servo angle, yaw. Uses the simulated true
+        attitude when available, so the uncalibrated gyro's yaw drift shows up in the memory (as on real
+        hardware) instead of slowly turning the synthetic view away from the table."""
+        truth = self.imu.true_attitude()
+        if truth is not None:
+            return truth[0], truth[1], self.servo.current, truth[2]
+        o = (self.imu.latest() or {}).get("orientation") or {}
+        return o.get("roll", 0.0), o.get("pitch", 0.0), self.servo.current, o.get("yaw_relative", 0.0)
+
+    def camera_pose_now(self) -> dict[str, float]:
+        """Camera pose when a frame is grabbed: IMU yaw (relative)/pitch/roll and servo tilt (+ up), degrees."""
+        o = (self.imu.latest() or {}).get("orientation") or {}
+        return {"yaw": float(o.get("yaw_relative", 0.0)), "pitch": float(o.get("pitch", 0.0)),
+                "roll": float(o.get("roll", 0.0)), "tilt": float(self.servo.tilt_deg() or 0.0)}
+
+    DEMO_PROMPTS = {"cups": ["cup", "sports ball", "person"], "outdoor": ["person", "car"]}
+
+    def set_demo_scene(self, name: str) -> dict[str, Any]:
+        """Synthetic mode only: switch the demo scene, matching IMU motion and YOLO prompts; clears the memory."""
+        out = self.camera.set_scene(name)
+        self.imu.set_mock_profile(name)
+        self.detector.set_prompts(self.DEMO_PROMPTS[name])
+        self.memory.clear()
+        return {**out, "prompts": list(self.detector.prompts)}
 
     async def _safe(self, name: str, fn: Any) -> None:
         try:
@@ -76,6 +99,10 @@ class Container:
         await self._safe("servo", self.servo.start)
         await self._safe("camera", lambda: asyncio.to_thread(self.camera.start))
         await self._safe("detector", self.detector.start)
+        if self.camera.is_synthetic and self.settings.mock_scene != "outdoor":
+            self.imu.set_mock_profile(self.settings.mock_scene)
+            self.detector.set_prompts(self.DEMO_PROMPTS[self.settings.mock_scene], quiet=True)
+        await self._safe("memory", self.memory.start)
         await self._safe("recording", self.recording.start)
         await self._safe("mapping", self.mapping.start)
         await self._safe("telemetry", self.telemetry.start)
@@ -88,7 +115,7 @@ class Container:
     async def stop(self) -> None:
         for name, fn in (
             ("telemetry", self.telemetry.stop), ("recording", self.recording.stop), ("mapping", self.mapping.stop),
-            ("qwen", self.qwen.stop),
+            ("qwen", self.qwen.stop), ("memory", self.memory.stop),
         ):
             try:
                 await fn()

@@ -15,7 +15,8 @@ an optional MediaMTX process.
 | `telemetry_service` | asyncio task | 20 Hz (+1 Hz full) | WebSocket clients via bounded queues |
 | `recording_service` | asyncio task + SQLite writer thread | 10 Hz | batched inserts (WAL) |
 | `detector_service` | own thread | up to 4 Hz (inference-bound) | ONNX YOLO/YOLOX, HOG fallback, synthetic GT |
-| `agent_service` | asyncio task per run | skills poll at 5 Hz | Qwen (plan/report), ServoService |
+| `memory_service` | asyncio task | every detector frame | object memory: tracks in a drone-centred frame from YOLO + IMU + servo pose |
+| `agent_service` | asyncio task per run | skills poll at 5 Hz | Qwen (plan/report), ServoService, memory (`goto`) |
 | `mapping_service` | worker thread | VO 5 Hz (opt-in) | OpenCV |
 | `ai_qwen_service` | asyncio (httpx) | on demand, serialized | llama-server on localhost |
 
@@ -33,8 +34,33 @@ DHT11  ──IIO sysfs──▶ plausibility check ──▶ latest/history/sess
 Camera ──JpegEncoder──▶ LatestValueHub ──▶ /api/camera/stream.mjpg (each viewer: newest frame only)
        ──H264Encoder──▶ PyavOutput (MP4)       ──lores──▶ YOLO detector ──▶ objects + range/bearing ──▶ WS
 All    ──recorder 10 Hz──▶ SQLite (sessions, telemetry, events, detections, chat)
-Agent  ◀── ai_context.observe (IMU, DHT11, servo, detections) ──▶ Qwen plan ──▶ servo skills ──▶ Qwen report
+Detections + pose at frame grab (IMU yaw/pitch/roll, servo tilt) ──▶ object memory ──▶ SEEN / REMEMBERED / HIDDEN ──▶ WS
+Agent  ◀── ai_context.observe (IMU, DHT11, servo, detections, memory) ──▶ Qwen plan ──▶ servo skills ──▶ Qwen report
 ```
+
+## Object memory
+
+`memory_service.ObjectMemory` is pure Python (no I/O) and unit-tested on its own and on the synthetic
+shell game. Each detection becomes a direction in a **drone-centred frame**:
+`az = relative yaw + image bearing`, `el = servo tilt + pitch + image elevation`, after removing the camera
+roll from the image angles. Range comes from the size prior. The IMU/servo pose is sampled when the frame
+is grabbed, so servo motion during inference doesn't smear positions.
+
+- **Association**: per class, constant-velocity prediction, gated nearest neighbour (9° + speed term).
+  Tracks are confirmed after 2 hits; one-frame flickers are dropped.
+- **Out of view vs. occluded**: a track outside the camera's field of view is *out of view*; inside it but
+  missed for `STRIX_MEMORY_MISS_FRAMES` frames, it is *occluded* — or **hidden** if a container class
+  (`STRIX_MEMORY_CONTAINERS`: cup, bowl, vase, wine glass) covers where it was.
+- **Containment**: a hidden object keeps its offset to its container and moves with it (azimuth and range;
+  it stays on the surface, so lifting the cup doesn't lift it). A lifted container with nothing under it
+  ends the containment ("not under it").
+- **Re-identification**: a detection near a remembered track revives it. If it's farther than 2× the gate,
+  the memory is *relocated* and an event says how wrong it was. Cut-off boxes at the frame edge don't update
+  the cut axis or the range.
+- **Limits**: the drone is assumed to hold its position (no validated localization). Relative yaw drifts
+  until the IMU is calibrated (about 0.25°/s uncalibrated in the simulation). Identical objects keep
+  identity only through continuous tracking; at < 2 detector FPS, fast swaps can exchange identities
+  (the reveal then corrects the memory).
 
 ## Orientation conventions
 

@@ -51,6 +51,10 @@ Errors use one shape: `{"error": {"code": "...", "message": "...", "details": [.
 | GET | `/api/detector` | — | Detector engine, FPS, inference time, prompts, latest detections |
 | GET | `/api/detector/classes` | — | Classes the active detector knows (COCO-80, or `person` for HOG) |
 | POST | `/api/detector/prompts` | `{prompts: [..]}` | Classes drawn on the video (422 if unknown) |
+| GET | `/api/memory` | — | Object memory: `objects[]` (SEEN / REMEMBERED / HIDDEN, `out_of_sight_s`, `contained_by`, direction `az`/`el`, `range_m`, `xyz`, `projected_bbox`), `events[]`, `counts`, camera pose, demo scene |
+| POST | `/api/memory/clear` | — | Forget everything |
+| POST | `/api/memory/aim` | `{target: "sports ball" \| "#4"}` | Aim the camera **tilt servo** at a remembered object; returns yaw/distance advice for the pilot. 404 if not in memory, 409 if servo control is disabled |
+| GET / POST | `/api/demo/scene` | `{scene: "cups" \| "outdoor"}` | Synthetic mode only: shell-game or outdoor demo scene (409 on real hardware) |
 | GET | `/api/ai/status` | — | Qwen / llama-server status |
 | POST | `/api/agent/run` | `{task}` | Run a Qwen agent task — streaming NDJSON (below); 409 if busy |
 | POST | `/api/agent/stop` | — | Cancel the running task |
@@ -104,10 +108,11 @@ Server → client (JSON text frames):
 - `{"type":"telemetry","ts","seq","demo_mode","imu":{"status","latest"},"agent":{…}}` at `STRIX_TELEMETRY_HZ` (20 Hz),
   plus `"detections"` whenever the detector has a new result (`detections[]` with `label`, `confidence`,
   normalized `bbox`, `distance_m`, `distance_kind`, `bearing_deg`, `elevation_deg`).
+  plus `"memory"` (same shape as `GET /api/memory`) whenever it changes and at least once per second.
   Once per second the message also has `"full": true` plus `imu_health`, `imu_calibration`,
   `environment`, `servo`, `camera`, `system`, `ai`, `detector`, `mapping`, `recording`.
 - `{"type":"event","event":{"ts","level","source","message"}}`
-- `{"type":"chat","message":{"id","ts","auto":true,"provider":"qwen|rules","vision","text"}}` (WATCH-mode comments on YOLO detections)
+- `{"type":"chat","message":{"id","ts","auto":true,"provider":"qwen|rules","vision","text"}}` (WATCH-mode comments on YOLO detections and memory events such as "hidden under cup #2")
 - `{"type":"pong","client_ts","server_ts"}` (milliseconds) in reply to a ping.
 
 Client → server: `{"type":"ping","client_ts": <ms>}`. The dashboard pings every 2 s for RTT and

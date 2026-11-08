@@ -125,15 +125,39 @@ class MockIMUBackend:
         self._bias = (0.6, -0.4, 0.25)  # °/s, removed by calibration
         self._prev: tuple[float, float, float, float] | None = None
         self._still_until = 0.0
+        self._from = self._to = self.PROFILES["outdoor"]
+        self._fade_t0 = 0.0
 
     def hold_still(self, seconds: float) -> None:
         """Simulate the operator setting the airframe level and still (for calibration demos)."""
         self._still_until = time.monotonic() + seconds
 
+    # Motion amplitude per demo scene: (roll, pitch, yaw) scale. "cups" = steady hover over a table.
+    PROFILES = {"outdoor": (1.0, 1.0, 1.0), "cups": (0.25, 0.25, 0.4)}
+
+    def set_profile(self, name: str) -> None:
+        """Cross-fade the motion amplitude to another profile over 3 s (no step in attitude)."""
+        now = time.monotonic() - self._t0
+        self._from = self._scale(now)
+        self._to = self.PROFILES.get(name, self.PROFILES["outdoor"])
+        self._fade_t0 = now
+
+    def _scale(self, t: float) -> tuple[float, float, float]:
+        s = min(1.0, max(0.0, (t - self._fade_t0) / 3.0))
+        return tuple(a + (b - a) * s for a, b in zip(self._from, self._to))  # type: ignore[return-value]
+
     def attitude(self, t: float) -> tuple[float, float, float]:
-        roll = 8.0 * math.sin(0.30 * t) + 2.5 * math.sin(1.13 * t + 0.4)
-        pitch = 5.0 * math.sin(0.21 * t + 1.0) + 1.5 * math.sin(0.87 * t)
-        yaw = 25.0 * math.sin(0.05 * t)
+        kr, kp, ky = self._scale(t)
+        roll = kr * (8.0 * math.sin(0.30 * t) + 2.5 * math.sin(1.13 * t + 0.4))
+        pitch = kp * (5.0 * math.sin(0.21 * t + 1.0) + 1.5 * math.sin(0.87 * t))
+        yaw = ky * 25.0 * math.sin(0.05 * t)
+        return roll, pitch, yaw
+
+    def truth(self) -> tuple[float, float, float]:
+        """Current simulated attitude (what the airframe really does, before sensor noise/bias/filtering)."""
+        roll, pitch, yaw = self.attitude(time.monotonic() - self._t0)
+        if time.monotonic() < self._still_until:
+            return 0.0, 0.0, self._prev[3] if self._prev else 0.0
         return roll, pitch, yaw
 
     def read(self):
@@ -407,6 +431,16 @@ class IMUService:
         except OSError:
             pass
         self._filter.reset(time.time())
+
+    def true_attitude(self) -> tuple[float, float, float] | None:
+        """Synthetic IMU only: the simulated ground-truth (roll, pitch, yaw) — the filter output drifts in yaw."""
+        b = self._backend
+        return b.truth() if isinstance(b, MockIMUBackend) else None
+
+    def set_mock_profile(self, name: str) -> None:
+        """Synthetic IMU only: steadier motion for the table-top demo scene."""
+        if isinstance(self._backend, MockIMUBackend):
+            self._backend.set_profile(name)
 
     def reset_yaw(self) -> None:
         self._filter.reset_yaw(time.time())

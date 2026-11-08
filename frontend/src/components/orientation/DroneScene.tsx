@@ -34,7 +34,7 @@ function Arm({ angle, front }: { angle: number; front: boolean }) {
   );
 }
 
-function Quad({ smoothing, lockYaw, cameraTilt }: { smoothing: boolean; lockYaw: boolean; cameraTilt: number | null }) {
+export function Quad({ smoothing, lockYaw, cameraTilt }: { smoothing: boolean; lockYaw: boolean; cameraTilt: number | null }) {
   const group = useRef<THREE.Group>(null);
   const target = useMemo(() => new THREE.Quaternion(), []);
   const euler = useMemo(() => new THREE.Euler(0, 0, 0, "YXZ"), []);

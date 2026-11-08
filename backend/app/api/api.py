@@ -20,7 +20,9 @@ from app.models.schemas import (
     AgentRunRequest,
     CalibrationRequest,
     CameraConfigRequest,
+    DemoSceneRequest,
     LoginRequest,
+    MemoryAimRequest,
     PromptsRequest,
     RecordingStartRequest,
     RecordingUpdateRequest,
@@ -425,6 +427,7 @@ async def reset_session(request: Request) -> dict[str, Any]:
     await asyncio.to_thread(c.agent.clear_history)
     c.imu.reset_yaw()
     c.dht.reset_session_extremes()
+    c.memory.clear()
     c.agent.state.update({"status": "idle", "node": None, "plan": [], "task": None, "step": None, "error": None})
     c.events.add("info", "operator", "session reset")
     return {"ok": True}
@@ -451,6 +454,49 @@ async def detector_prompts(body: PromptsRequest, request: Request) -> dict[str, 
     except DetectorError as exc:
         raise err(422, "unknown_class", str(exc)) from exc
     return {"prompts": prompts}
+
+
+# ============================================================ object memory
+@router.get("/memory")
+async def memory_state(request: Request) -> dict[str, Any]:
+    """Seen / remembered / hidden objects with out-of-sight timers, in a drone-centred frame."""
+    return get_container(request).memory.snapshot()
+
+
+@router.post("/memory/clear")
+async def memory_clear(request: Request) -> dict[str, Any]:
+    c = get_container(request)
+    c.memory.clear()
+    return c.memory.snapshot()
+
+
+@router.post("/memory/aim")
+async def memory_aim(body: MemoryAimRequest, request: Request) -> dict[str, Any]:
+    """Aim the camera (tilt servo) at a remembered object and return yaw/distance advice for the pilot.
+    The aircraft is never moved."""
+    c = get_container(request)
+    try:
+        out = c.memory.aim_at(body.target)
+    except KeyError as exc:
+        raise err(404, "not_in_memory", str(exc.args[0])) from exc
+    except ServoError as exc:
+        raise err(409, "servo_error", str(exc)) from exc
+    c.events.add("info", "memory", f"camera aimed at remembered {out['target']} ({out['state']}); " + " ".join(out["guidance"]))
+    return out
+
+
+@router.get("/demo/scene")
+async def demo_scene(request: Request) -> dict[str, Any]:
+    return {"scene": get_container(request).camera.scene(), "available": ["outdoor", "cups"]}
+
+
+@router.post("/demo/scene")
+async def set_demo_scene(body: DemoSceneRequest, request: Request) -> dict[str, Any]:
+    """Synthetic demo only: switch between the outdoor scene and the cups (shell game) scene."""
+    try:
+        return get_container(request).set_demo_scene(body.scene)
+    except CameraError as exc:
+        raise err(409, "not_synthetic", str(exc)) from exc
 
 
 # ============================================================ agent / Qwen

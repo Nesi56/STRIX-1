@@ -1,10 +1,11 @@
 import { Camera, Circle, Expand, RefreshCw, Square, Video } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useMjpeg } from "../../hooks/useMjpeg";
-import { useTelemetry } from "../../hooks/useTelemetry";
+import { telemetry, useTelemetry } from "../../hooks/useTelemetry";
+import { MEM_COLOR, stateText } from "../../lib/memory";
 import { errorMessage, post } from "../../services/api";
 import { fmtDuration } from "../../lib/format";
-import type { DetectedObject } from "../../types/telemetry";
+import type { DetectedObject, MemoryState } from "../../types/telemetry";
 import { useToast } from "../common/toast";
 
 const GREEN = "#39ff7a";
@@ -14,22 +15,61 @@ export function boxLabel(d: DetectedObject): string {
   return `${d.label} ${d.confidence.toFixed(2)}${r}`;
 }
 
+/** Remembered / hidden objects projected into the current view: dashed boxes ("see-through" memory). */
+function drawMemory(ctx: CanvasRenderingContext2D, w: number, h: number, mem: MemoryState | null) {
+  if (!mem) return;
+  const lw = Math.max(2, w / 600);
+  const fs = Math.max(11, Math.round(w / 74));
+  const now = telemetry.clock.serverNow();
+  ctx.font = `600 ${fs}px ui-monospace, monospace`;
+  ctx.setLineDash([lw * 4, lw * 3]);
+  for (const o of mem.objects) {
+    if (o.memory === "seen" || !o.projected_bbox) continue;
+    const [x, y, bw, bh] = o.projected_bbox;
+    const color = MEM_COLOR[o.memory];
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw;
+    ctx.strokeRect(x * w, y * h, bw * w, bh * h);
+    const text = `${o.name} · ${stateText(o, mem, now)}`;
+    const tw = ctx.measureText(text).width + 10;
+    const ty = Math.min(h - fs - 6, (y + bh) * h + 3);
+    ctx.fillStyle = "rgba(0,0,0,0.72)";
+    ctx.fillRect(x * w, ty, tw, fs + 6);
+    ctx.fillStyle = color;
+    ctx.fillText(text, x * w + 5, ty + fs);
+  }
+  ctx.setLineDash([]);
+}
+
 function drawBoxes(ctx: CanvasRenderingContext2D, w: number, h: number, dets: DetectedObject[], stale: boolean) {
   ctx.clearRect(0, 0, w, h);
   const lw = Math.max(2, w / 520);
   const fs = Math.max(12, Math.round(w / 64));
   ctx.font = `600 ${fs}px ui-monospace, monospace`;
   ctx.globalAlpha = stale ? 0.4 : 1;
-  for (const d of dets) {
+  const placed: [number, number, number, number][] = [];
+  const free = (r: [number, number, number, number]) =>
+    !placed.some((q) => r[0] < q[0] + q[2] && q[0] < r[0] + r[2] && r[1] < q[1] + q[3] && q[1] < r[1] + r[3]);
+  for (const d of [...dets].sort((a, b) => a.bbox[0] - b.bbox[0])) {
     const [x, y, bw, bh] = d.bbox;
     ctx.strokeStyle = GREEN;
     ctx.lineWidth = lw;
     ctx.strokeRect(x * w, y * h, bw * w, bh * h);
     const text = boxLabel(d);
     const tw = ctx.measureText(text).width + 10;
-    const ty = Math.max(0, y * h - fs - 6);
+    const lh = fs + 6;
+    // stack labels of neighbouring boxes instead of overlapping them
+    const tries = [0, 1, 2, 3].map((k) => Math.max(0, y * h - lh * (k + 1) - k * 2));
+    const ty = tries.find((t) => free([x * w, t, tw, lh])) ?? tries[0];
+    placed.push([x * w, ty, tw, lh]);
+    if (ty < y * h - lh - 1) {
+      ctx.beginPath();
+      ctx.moveTo(x * w + 4, ty + lh);
+      ctx.lineTo(x * w + 4, y * h);
+      ctx.stroke();
+    }
     ctx.fillStyle = GREEN;
-    ctx.fillRect(x * w - lw / 2, ty, tw, fs + 6);
+    ctx.fillRect(x * w - lw / 2, ty, tw, lh);
     ctx.fillStyle = "#04150b";
     ctx.fillText(text, x * w + 4, ty + fs);
     ctx.beginPath();
@@ -53,6 +93,7 @@ export function VideoFeed() {
   const st = useTelemetry();
   const cam = st?.camera ?? null;
   const det = st?.detections ?? null;
+  const mem = st?.memory ?? null;
   const toast = useToast();
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -73,8 +114,11 @@ export function VideoFeed() {
       o.height = h;
     }
     const ctx = o.getContext("2d");
-    if (ctx) drawBoxes(ctx, w, h, det?.detections ?? [], !!det && Date.now() / 1000 - det.ts > 3);
-  }, [det, cam?.width, cam?.height, m.frames]);
+    if (ctx) {
+      drawBoxes(ctx, w, h, det?.detections ?? [], !!det && Date.now() / 1000 - det.ts > 3);
+      drawMemory(ctx, w, h, mem);
+    }
+  }, [det, mem, cam?.width, cam?.height, m.frames]);
 
   const act = async (fn: () => Promise<unknown>, ok?: string) => {
     setBusy(true);
