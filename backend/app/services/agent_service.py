@@ -35,8 +35,11 @@ from app.services.ai_context import (
     PLANNER_PROMPT,
     REPORT_PROMPT,
     SKILLS,
+    WATCH_PROMPT,
     deterministic_report,
+    deterministic_watch,
     describe_detection,
+    is_visual,
     observation_text,
     observe,
     suggestions,
@@ -66,8 +69,12 @@ def _num(v: Any, lo: float, hi: float, default: float) -> float:
     return max(lo, min(hi, x))
 
 
-def rule_plan(task: str, vocabulary: list[str]) -> tuple[str, list[dict[str, Any]]]:
-    """Keyword planner used when Qwen is offline (or returned an unusable plan)."""
+def rule_plan(task: str, vocabulary: list[str], current_tilt: float = 0.0) -> tuple[str, list[dict[str, Any]], str]:
+    """Keyword planner used when Qwen is offline (or returned an unusable plan).
+
+    Returns (target_class, plan, note). The note explains choices such as a default
+    direction, or why a request cannot be done with a tilt-only servo.
+    """
     t = task.lower()
     target = ""
     words = re.findall(r"[a-z]+", t)
@@ -81,23 +88,50 @@ def rule_plan(task: str, vocabulary: list[str]) -> tuple[str, list[dict[str, Any
             break
     m = re.search(r"(-?\d+(?:\.\d+)?)\s*(?:°|deg|degree)", t) or re.search(r"\b(-?\d+(?:\.\d+)?)\b", t)
     num = float(m.group(1)) if m else None
+    if num is not None:
+        amount = abs(num)
+    elif re.search(r"\b(little|bit|slightly|tad|small)\b", t):
+        amount = 8.0
+    elif re.search(r"\b(lot|way|far|much|big)\b", t):
+        amount = 30.0
+    else:
+        amount = 15.0
+    up = re.search(r"\b(up|upward|upwards|raise|higher|sky|ceiling|above|tilt back)\b", t)
+    down = re.search(r"\b(down|downward|downwards|lower|floor|ground|below|feet)\b", t)
+    sideways = re.search(r"\b(left|right|pan|yaw|sideways)\b", t)
+
     if re.search(r"\b(track|follow|keep\b.*\b(view|centered|centred|frame))", t) and target:
-        return target, [{"skill": "find", "target": target}, {"skill": "track", "target": target, "seconds": 8}]
+        return target, [{"skill": "find", "target": target}, {"skill": "track", "target": target, "seconds": 8}], ""
     if re.search(r"\b(find|look for|search|where is|where are|locate|spot)\b", t) and target:
-        return target, [{"skill": "find", "target": target}]
+        return target, [{"skill": "find", "target": target}], ""
     if re.search(r"\b(scan|look around|survey|sweep)\b", t):
-        return target, [{"skill": "scan"}]
-    if re.search(r"\b(level|reset the camera|center the camera|centre the camera|straight ahead)\b", t) or t.strip() in ("center", "centre"):
-        return target, [{"skill": "center"}]
+        return target, [{"skill": "scan"}], ""
+    if sideways and not up and not down:
+        return target, [], "The camera servo only tilts up/down — yaw the drone to look left or right."
+    if re.search(r"\b(level|straight|forward|ahead|reset the camera|center the camera|centre the camera|horizon)\b", t) or t.strip() in ("center", "centre"):
+        return target, [{"skill": "center"}], ""
     if re.search(r"\b(center|centre)\b", t) and target:
-        return target, [{"skill": "find", "target": target}, {"skill": "track", "target": target, "seconds": 5}]
-    if re.search(r"\b(up|upward|raise)\b", t):
-        return target, [{"skill": "tilt", "delta": abs(num) if num is not None else 15}]
-    if re.search(r"\b(down|downward|lower)\b", t):
-        return target, [{"skill": "tilt", "delta": -(abs(num) if num is not None else 15)}]
-    if re.search(r"\b(look|tilt|point)\b", t) and num is not None:
-        return target, [{"skill": "look", "tilt": num}]
-    return target, []
+        return target, [{"skill": "find", "target": target}, {"skill": "track", "target": target, "seconds": 5}], ""
+    if up and re.search(r"\b(all the way|max|maximum|fully|top)\b", t):
+        return target, [{"skill": "look", "tilt": 90.0}], "Tilted to the upper safe limit."
+    if down and re.search(r"\b(all the way|max|maximum|fully|bottom)\b", t):
+        return target, [{"skill": "look", "tilt": -90.0}], "Tilted to the lower safe limit."
+    if re.search(r"\b(sky|ceiling)\b", t):
+        return target, [{"skill": "look", "tilt": 45.0}], ""
+    if re.search(r"\b(floor|ground|feet)\b", t):
+        return target, [{"skill": "look", "tilt": -45.0}], ""
+    if up:
+        return target, [{"skill": "tilt", "delta": amount}], ""
+    if down:
+        return target, [{"skill": "tilt", "delta": -amount}], ""
+    if re.search(r"\b(look|tilt|point|angle|set)\b", t) and num is not None:
+        return target, [{"skill": "look", "tilt": num}], ""
+    if re.search(r"\b(wiggle|nod|shake|test)\b", t) and re.search(r"\b(servo|camera|gimbal)\b", t):
+        return target, [{"skill": "tilt", "delta": 20}, {"skill": "tilt", "delta": -40}, {"skill": "center"}], "Servo test: up, down, back to level."
+    if re.search(r"\b(move|turn|rotate|swing|adjust|shift|change)\b", t) and re.search(r"\b(servo|camera|gimbal|view|it)\b", t):
+        d = -20.0 if current_tilt > 5 else 20.0
+        return target, [{"skill": "tilt", "delta": d}], f"No direction given — tilted the camera {'down' if d < 0 else 'up'} 20°."
+    return target, [], ""
 
 
 class AgentService:
@@ -108,12 +142,26 @@ class AgentService:
         self._running = False
         self.state: dict[str, Any] = {"status": "idle", "node": None, "plan": [], "task": None, "run_id": None,
                                       "planner": None, "step": None, "error": None}
+        self.watch_enabled = bool(getattr(c.settings, "agent_watch", True))
+        self._watch_task: asyncio.Task | None = None
+        self._comment_task: asyncio.Task | None = None
+        self.last_watch: dict[str, Any] | None = None
+        self._plan_note = ""
 
     # ----------------------------------------------------------- control
     def snapshot(self) -> dict[str, Any]:
         st = dict(self.state)
         st["plan"] = [dict(p) for p in self.state["plan"]]
+        st["watch"] = self.watch_enabled
         return st
+
+    async def start(self) -> None:
+        self._watch_task = asyncio.create_task(self._watch_loop(), name="agent-watch")
+
+    async def shutdown(self) -> None:
+        for t in (self._watch_task, self._comment_task):
+            if t:
+                t.cancel()
 
     def stop(self, reason: str = "stopped by operator") -> bool:
         if not self._running:
@@ -207,10 +255,13 @@ class AgentService:
                 return "qwen", str(data.get("thought", ""))[:200], target, plan, stats
             except LLMError as exc:
                 log.warning("Qwen planning failed, using rule planner: %s", exc)
-                target, plan = rule_plan(task, self.c.detector.vocabulary)
-                return "rules", f"Qwen planning failed ({exc.code}); keyword planner used", target, plan, {}
-        target, plan = rule_plan(task, self.c.detector.vocabulary)
-        return "rules", f"Qwen {q.state} — keyword planner used", target, plan, {}
+                target, raw, note = rule_plan(task, self.c.detector.vocabulary, self.c.servo.tilt_deg() or 0.0)
+                self._plan_note = note
+                return "rules", f"Qwen planning failed ({exc.code}); keyword planner used. {note}".strip(), target, self._validate_plan(raw), {}
+        target, raw, note = rule_plan(task, self.c.detector.vocabulary, self.c.servo.tilt_deg() or 0.0)
+        self._plan_note = note
+        state = "not running (run scripts/setup_ai.sh)" if q.state == "unreachable" else q.state
+        return "rules", f"Qwen {state} — keyword planner used. {note}".strip(), target, self._validate_plan(raw), {}
 
     # ----------------------------------------------------------- skills
     async def _move(self, fn, *args) -> str | None:
@@ -363,11 +414,116 @@ class AgentService:
             "wait": lambda: f"wait {step.get('seconds', 1):.1f} s",
         }.get(sk, lambda: sk)()
 
+    # ----------------------------------------------------------- vision
+    def _camera_b64(self) -> str | None:
+        """Newest camera frame as a small JPEG (base64) for the Qwen vision model."""
+        import base64
+
+        _, frame = self.c.camera.hub.latest()
+        if frame is None or time.time() - frame.capture_ts > 3.0:
+            return None
+        try:
+            import cv2
+            import numpy as np
+
+            img = cv2.imdecode(np.frombuffer(frame.jpeg, np.uint8), cv2.IMREAD_COLOR)
+            max_w = int(getattr(self.s, "agent_image_px", 448))
+            h, w = img.shape[:2]
+            if w > max_w:
+                img = cv2.resize(img, (max_w, int(h * max_w / w)), interpolation=cv2.INTER_AREA)
+            ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            return base64.b64encode(buf.tobytes()).decode() if ok else None
+        except Exception:
+            return base64.b64encode(frame.jpeg).decode()
+
+    async def _user_content(self, text: str, with_image: bool) -> tuple[Any, bool]:
+        if with_image and self.c.qwen.vision_capable:
+            b64 = await asyncio.to_thread(self._camera_b64)
+            if b64:
+                return [{"type": "text", "text": text},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}], True
+        return text, False
+
+    # ----------------------------------------------------------- watch (Qwen responds to YOLO)
+    def set_watch(self, enabled: bool) -> dict[str, Any]:
+        self.watch_enabled = enabled
+        self.c.events.add("info", "agent", f"YOLO watch {'on' if enabled else 'off'}")
+        return self.snapshot()
+
+    async def _watch_loop(self) -> None:
+        from collections import Counter
+
+        last_sig: tuple | None = None
+        pending: tuple | None = None
+        pending_since = 0.0
+        last_comment = 0.0
+        while True:
+            await asyncio.sleep(1.0)
+            try:
+                if not self.watch_enabled or self._running or (self._comment_task and not self._comment_task.done()):
+                    continue
+                det = self.c.detector.latest()
+                if not det or time.time() - det["ts"] > 3.0:
+                    continue
+                sig = tuple(sorted(Counter(d["label"] for d in det["detections"]).items()))
+                now = time.monotonic()
+                if sig == last_sig:
+                    pending = None
+                    continue
+                if sig != pending:  # require the change to be stable for ~2 s
+                    pending, pending_since = sig, now
+                    continue
+                if now - pending_since < 2.0:
+                    continue
+                if not sig:  # objects left the view: re-arm silently
+                    last_sig = sig
+                    continue
+                if now - last_comment < float(getattr(self.s, "agent_watch_interval_s", 20.0)):
+                    continue
+                last_sig, last_comment = sig, now
+                self._comment_task = asyncio.create_task(self._comment(det["detections"]))
+            except Exception:
+                log.exception("watch loop error")
+
+    async def _comment(self, dets: list[dict[str, Any]]) -> None:
+        obs = observe(self.c)
+        sugg = suggestions(obs, None, self.s.agent_standoff_m)
+        provider, vision = "rules", False
+        text = deterministic_watch(dets, sugg, bool(obs["synthetic"]))
+        if self.c.qwen.state == "ready":
+            event = "EVENT: YOLO just detected: " + "; ".join(describe_detection(d) for d in dets[:5])
+            content, vision = await self._user_content(
+                f"{observation_text(obs)}\n\nPILOT SUGGESTIONS:\n" + ("\n".join(f"- {x}" for x in sugg) or "- none") + f"\n\n{event}", True)
+            san = StreamingSanitizer()
+            out = ""
+            gen = self.c.qwen.stream_chat([{"role": "system", "content": WATCH_PROMPT}, {"role": "user", "content": content}],
+                                          max_tokens=90)
+            try:
+                async for ev in gen:
+                    if "delta" in ev:
+                        out += san.feed(ev["delta"])
+                tail, replace = san.finish()
+                out = tail if replace else out + tail
+                if out.strip():
+                    text, provider = out.strip(), "qwen"
+            except LLMError as exc:
+                log.info("watch comment fell back to rules: %s", exc)
+            finally:
+                await gen.aclose()
+        msg = {"id": uuid.uuid4().hex[:8], "ts": time.time(), "role": "assistant", "auto": True,
+               "provider": provider, "vision": vision, "text": text}
+        self.last_watch = msg
+        self._save("assistant", text, provider, {"auto": True, "vision": vision})
+        self.c.telemetry.broadcast_chat(msg)
+
     # ----------------------------------------------------------- run
     async def run(self, task: str) -> AsyncIterator[dict[str, Any]]:
         if self._running:
             raise AgentBusy("the agent is already running a task — stop it first")
         self._running = True
+        self._plan_note = ""
+        if self._comment_task and not self._comment_task.done():
+            self._comment_task.cancel()  # operator tasks take priority over watch comments
         self._cancel.clear()
         run_id = uuid.uuid4().hex[:8]
         self.state.update({"status": "running", "task": task, "run_id": run_id, "plan": [], "planner": None,
@@ -417,11 +573,18 @@ class AgentService:
             yield self._node("report")
             text, stats = "", {}
             provider = "rules"
+            visual = is_visual(task) or any(p["skill"] in ("scan", "find") for p in plan)
+            vision_used = False
             if self.c.qwen.state == "ready":
                 provider = "qwen"
-                content = (f"{observation_text(obs)}\n\nACTION LOG:\n" + ("\n".join(f"- {a}" for a in actions) or "- no camera motion")
-                           + "\n\nPILOT SUGGESTIONS:\n" + ("\n".join(f"- {s}" for s in sugg) or "- none")
-                           + f"\n\nTASK: {task}")
+                content_text = (f"{observation_text(obs)}\n\nACTION LOG:\n" + ("\n".join(f"- {a}" for a in actions) or "- no camera motion")
+                                + "\n\nPILOT SUGGESTIONS:\n" + ("\n".join(f"- {s}" for s in sugg) or "- none")
+                                + f"\n\nTASK: {task}")
+                if visual and not self.c.qwen.vision_capable:
+                    content_text += ("\n\nNOTE: this is a visual question but the loaded Qwen model is text-only — say "
+                                     "[UNAVAILABLE] for identification beyond the YOLO detections.")
+                content, vision_used = await self._user_content(content_text, visual)
+                yield {"type": "vision", "image_sent": vision_used, "vision_capable": self.c.qwen.vision_capable}
                 san = StreamingSanitizer()
                 gen = self.c.qwen.stream_chat([{"role": "system", "content": REPORT_PROMPT},
                                                {"role": "user", "content": content}], max_tokens=260)
@@ -446,13 +609,15 @@ class AgentService:
                 finally:
                     await gen.aclose()
             if provider == "rules":
-                text = deterministic_report(obs, task, actions, sugg)
+                text = deterministic_report(obs, task, actions, sugg, self._plan_note)
                 yield {"type": "replace", "text": text}
             self._save("assistant", text, provider, {"run_id": run_id, "planner": planner, "plan": self.state["plan"],
-                                                     "suggestions": sugg, "stats": stats, "thought": thought})
+                                                     "suggestions": sugg, "stats": stats, "thought": thought,
+                                                     "vision": vision_used})
             self.state.update(status="done", node="complete")
             total = round((time.perf_counter() - t_start) * 1000)
-            yield {"type": "done", "planner": planner, "reporter": provider, "stats": stats, "total_ms": total}
+            yield {"type": "done", "planner": planner, "reporter": provider, "stats": stats, "total_ms": total,
+                   "vision": vision_used}
         except Cancelled:
             self.state.update(status="stopped", node=None)
             yield {"type": "stopped", "reason": self.state.get("error") or "stopped"}

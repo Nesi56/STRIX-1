@@ -1,45 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
 import { LoginScreen } from "./components/auth/LoginScreen";
 import { ToastProvider } from "./components/common/toast";
-import { TopBar, type View } from "./components/console/TopBar";
-import { telemetry } from "./hooks/useTelemetry";
+import { ConnectionBanner, TopBar } from "./components/console/TopBar";
+import { telemetry, useTelemetrySnapshot } from "./hooks/useTelemetry";
 import { get, onUnauthorized } from "./services/api";
 import { ConsolePage } from "./pages/ConsolePage";
-import { CalibrationPage, RecordingsPage, SystemPage } from "./pages/SecondaryPages";
-
-const VIEWS: View[] = ["console", "recordings", "system", "calibration"];
-const readView = (): View => {
-  const h = location.hash.replace("#/", "") as View;
-  return VIEWS.includes(h) ? h : "console";
-};
 
 function Shell() {
-  const [view, setViewState] = useState<View>(readView);
-  const setView = (v: View) => {
-    location.hash = `#/${v}`;
-    setViewState(v);
-  };
-  useEffect(() => {
-    const f = () => setViewState(readView());
-    window.addEventListener("hashchange", f);
-    return () => window.removeEventListener("hashchange", f);
-  }, []);
+  const snap = useTelemetrySnapshot();
   useEffect(() => {
     telemetry.start();
     return () => telemetry.stop();
   }, []);
   return (
     <div className="flex h-full flex-col">
-      <TopBar view={view} setView={setView} />
+      <TopBar />
+      <ConnectionBanner conn={snap.conn} attempt={snap.reconnectAttempt} />
       <main className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
-        {view === "console" && <ConsolePage />}
-        {view !== "console" && (
-          <div className="h-full overflow-y-auto">
-            {view === "recordings" && <RecordingsPage />}
-            {view === "system" && <SystemPage />}
-            {view === "calibration" && <CalibrationPage />}
-          </div>
-        )}
+        <ConsolePage />
       </main>
     </div>
   );

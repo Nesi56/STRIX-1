@@ -176,6 +176,8 @@ targets must be detector classes such as person, car, dog, chair, bottle.
 
 Examples:
 TASK: look up a bit -> {"thought":"tilt up 15 degrees","target":"","plan":[{"skill":"tilt","delta":15}]}
+TASK: move the servo please -> {"thought":"no direction given, tilt up 20 degrees","target":"","plan":[{"skill":"tilt","delta":20}]}
+TASK: look at the floor -> {"thought":"point the camera down","target":"","plan":[{"skill":"look","tilt":-45}]}
 TASK: find the person and keep them in view -> {"thought":"locate then track","target":"person","plan":[{"skill":"find","target":"person"},{"skill":"track","target":"person","seconds":8}]}
 TASK: how warm is it? -> {"thought":"question only","target":"","plan":[]}"""
 
@@ -207,17 +209,58 @@ PLAN_SCHEMA = {
 
 REPORT_PROMPT = """You are STRIX-1's onboard assistant on a camera drone. The operator flies the drone; you only
 move the camera tilt servo (already done, see ACTION LOG) and give advice.
-Answer the TASK using ONLY the data provided, in at most 6 short lines:
+Answer the TASK using ONLY the data provided (and the camera IMAGE if one is attached), in at most 7 short lines:
+- [SEEN] what you can identify in the attached camera image (objects, people, text, colours). Only if an image is attached.
+- [DETECTED] YOLO objects with estimated distance and direction (estimates are ±30 %).
 - [MEASURED] sensor values you rely on (IMU, DHT11) with their numbers.
-- [DETECTED] objects with estimated distance and direction (estimates are ±30 %).
 - What the camera did, from the ACTION LOG.
 - SUGGEST: lines with how to move or complete the task — reuse the PILOT SUGGESTIONS.
 Mark your own guesses [INTERPRETATION] and missing data [UNAVAILABLE]. If data is SYNTHETIC say so.
 Never invent positions, GPS, altitude or battery levels. No code, no shell commands."""
 
+WATCH_PROMPT = """You are the camera-operator AI of a small drone. The YOLO detector just reported new objects.
+Reply in at most 2 short sentences: what was detected (with estimated distance and direction) and one
+"SUGGEST:" line for the pilot. If a camera IMAGE is attached, add what you identify in it marked [SEEN].
+Do not invent anything that is not in the data or the image. No code."""
 
-def deterministic_report(o: dict[str, Any], task: str, actions: list[str], sugg: list[str]) -> str:
+_VISUAL_RE = None
+
+
+def is_visual(task: str) -> bool:
+    """Questions that need the camera image itself (not just YOLO's class list)."""
+    import re
+
+    global _VISUAL_RE
+    if _VISUAL_RE is None:
+        _VISUAL_RE = re.compile(
+            r"\b(identify|recogni[sz]e|describe|what (?:is|are) (?:this|that|it|these|those|in front|there)|what's (?:this|that|there)|"
+            r"what do you see|what can you see|what does the camera (?:see|show)|what (?:is|am i) holding|look at (?:this|that)|"
+            r"read (?:this|that|the)|what colou?r|how many|count|see anything|in view|in the (?:image|picture|frame|video))\b",
+            re.IGNORECASE,
+        )
+    return bool(_VISUAL_RE.search(task))
+
+
+def deterministic_watch(dets: list[dict[str, Any]], sugg: list[str], synthetic: bool) -> str:
+    """Rule-based announcement of new YOLO detections (used when Qwen is offline)."""
+    from collections import Counter
+
+    counts = Counter(d["label"] for d in dets)
+    what = ", ".join(f"{n}× {lab}" if n > 1 else lab for lab, n in counts.items())
+    near = [d for d in dets if d.get("distance_m") is not None]
+    lead = min(near, key=lambda d: d["distance_m"]) if near else (dets[0] if dets else None)
+    parts = [f"[DETECTED] YOLO sees {what}" + (" (synthetic demo)" if synthetic else "") + "."]
+    if lead:
+        parts.append(f"Nearest: {describe_detection(lead)}.")
+    if sugg:
+        parts.append(f"SUGGEST: {sugg[0]}")
+    return " ".join(parts)
+
+
+def deterministic_report(o: dict[str, Any], task: str, actions: list[str], sugg: list[str], note: str = "") -> str:
     lines = ["**Telemetry report** (rule-based — Qwen offline)."]
+    if note:
+        lines.append(f"- {note}")
     if o["synthetic"]:
         lines.append(f"- ⚠ SYNTHETIC DEMO DATA ({', '.join(o['synthetic'])})")
     i = o["imu"]
@@ -232,6 +275,9 @@ def deterministic_report(o: dict[str, Any], task: str, actions: list[str], sugg:
         lines.append("- [DETECTED] no objects in view")
     for a in actions:
         lines.append(f"- Camera: {a}")
+    if is_visual(task):
+        lines.append("- [UNAVAILABLE] Identifying things beyond YOLO's object classes needs the Qwen vision model "
+                     "(run scripts/setup_ai.sh on the Pi).")
     for s in sugg:
         lines.append(f"- SUGGEST: {s}")
     return "\n".join(lines)

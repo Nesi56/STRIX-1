@@ -3,10 +3,12 @@
 STRIX-1 runs **one** AI model: a small **Qwen** model running locally on the Raspberry Pi 5 through
 llama.cpp. No cloud service is used. Qwen:
 
-1. **controls the camera tilt servo** (look up/down, center, scan, find an object, keep it centered),
-2. **reads the sensors**: MPU6050 attitude, DHT11 temperature/humidity, and YOLO detections,
-3. **estimates distance and direction** to detected objects,
-4. **suggests how to move** or how to complete the task. The human pilot flies the drone;
+1. **sees**: with the Qwen-VL vision model it looks at the current camera frame and identifies what is there (`[SEEN]`),
+2. **reacts to YOLO**: in WATCH mode it comments by itself when YOLO detects new objects,
+3. **controls the camera tilt servo** (look up/down, center, scan, find an object, keep it centered),
+4. **reads the sensors**: MPU6050 attitude, DHT11 temperature/humidity, and YOLO detections,
+5. **estimates distance and direction** to detected objects,
+6. **suggests how to move** or how to complete the task. The human pilot flies the drone;
    STRIX-1 never sends flight commands.
 
 ## The agent graph
@@ -72,34 +74,54 @@ If llama-server is loading or unreachable, the dashboard keeps working. A **keyw
 stand in, clearly labeled *RULE PLAN* / *rule-based*. If Qwen returns unusable JSON, the same
 fallback is used for that task.
 
-## Running Qwen on the Pi 5
+## Vision: Qwen looks at the camera
+
+When the loaded model reports vision support (llama-server `/props` → `modalities.vision`), STRIX-1 attaches
+the newest camera frame (scaled to 448 px wide, `STRIX_AGENT_IMAGE_PX`) to the REPORT for visual requests
+("identify this", "what do you see", "describe", "how many…", "what colour…") and for `scan`/`find` tasks.
+Qwen marks what it identifies in the image as `[SEEN]`, kept separate from YOLO's `[DETECTED]` boxes. The chat
+shows **SAW CAMERA IMAGE** on those answers. A text-only model never receives images; it says
+`[UNAVAILABLE]` for visual identification instead.
+
+## WATCH mode: Qwen responds to YOLO
+
+With **WATCH ON** (chat header, default on), a background loop checks the YOLO detections every second.
+When the set of prompted objects changes and stays stable for ~2 s, Qwen writes a 1–2 sentence comment
+(with the camera image if it has vision): what appeared, estimated distance/direction, and a `SUGGEST:`
+line. Comments are at least `STRIX_AGENT_WATCH_INTERVAL_S` (20 s) apart, never run during an operator
+task, and are cancelled the moment you give Qwen a task. Without Qwen, a rule-based announcement is used.
+
+## Running Qwen on the Pi 5 — one command
+
+```bash
+cd ~/STRIX-1 && scripts/setup_ai.sh          # Qwen2.5-VL-3B-Instruct (best quality)
+cd ~/STRIX-1 && scripts/setup_ai.sh --fast   # Qwen2-VL-2B-Instruct (faster)
+```
+
+The script:
+1. installs the YOLO detector
+2. builds llama.cpp
+3. asks Hugging Face which GGUF files `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF` contains, then downloads the Q4_K_M model and its vision projector (mmproj)
+4. installs the `strix1-llama` service (localhost only)
+5. writes the `QWEN_*` settings into `.env`
+6. restarts STRIX-1 and waits until Qwen answers
+
+It is safe to re-run. Run it inside `tmux`; it downloads about 3–4 GB and the build takes 10–20 minutes.
+
+**Speed (estimate, measure on your Pi):** a text answer takes seconds to tens of seconds. An answer
+with a camera image adds image encoding on the CPU, so expect roughly 20–60 s with the 3B model and less
+with `--fast`. Servo skills such as `track` don't wait for the model.
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `QWEN_SERVER_URL` | `http://127.0.0.1:8080` | llama-server address (keep it on localhost) |
-| `QWEN_MODEL_ID` | `qwen2.5-3b-instruct-q4_k_m` | label shown in the UI |
-| `QWEN_CTX_SIZE` | 4096 | context length (`-c`); a planning prompt is ~800 tokens |
-| `QWEN_THREADS` | 3 | CPU threads (`-t`); leaves one core for camera and sensors |
-| `QWEN_MANAGE_SERVER` | false | let the backend start/stop llama-server itself |
+| `QWEN_MODEL_ID` | set by setup_ai.sh | label shown in the UI |
+| `QWEN_CTX_SIZE` / `QWEN_THREADS` | 4096 / 3 | context length / CPU threads (one core left for camera and sensors) |
+| `STRIX_AGENT_WATCH` / `STRIX_AGENT_WATCH_INTERVAL_S` | true / 20 | YOLO watch comments |
+| `STRIX_AGENT_IMAGE_PX` | 448 | width of frames sent to the vision model |
 
-| Model | Quant | RAM | Notes |
-|---|---|---|---|
-| Qwen2.5-3B-Instruct (`Qwen/Qwen2.5-3B-Instruct-GGUF`) | Q4_K_M ≈ 2 GB | ≈ 3 GB | default |
-| Qwen2.5-1.5B-Instruct (`Qwen/Qwen2.5-1.5B-Instruct-GGUF`) | Q4_K_M ≈ 1 GB | ≈ 1.6 GB | about 2× faster — **recommended for live demos** |
-| Qwen3-4B-Instruct-2507 (community GGUF) | Q4_K_M ≈ 2.5 GB | ≈ 3.5 GB | stronger, slower |
-
-A task makes two Qwen calls: one plan and one report. On the Pi 5's CPU, expect a few
-seconds to tens of seconds per call depending on the model. Skills like `track` run at the
-detector rate without the LLM in the loop, so camera motion stays responsive. The chat shows the
-measured time and tokens/s for every answer. The schema-constrained JSON planning depends on
-llama-server's `response_format` support; use a current llama.cpp build.
-
-```bash
-scripts/build_llama_cpp.sh
-scripts/download_qwen.sh                                      # 3B default
-scripts/download_qwen.sh Qwen/Qwen2.5-1.5B-Instruct-GGUF qwen2.5-1.5b-instruct-q4_k_m.gguf   # faster
-scripts/install_llama_service.sh ~/STRIX-1/models/qwen2.5-3b-instruct-q4_k_m.gguf 3 4096
-```
+Text-only models (e.g. `Qwen/Qwen2.5-1.5B-Instruct-GGUF` via `scripts/download_qwen.sh`) also work. They
+plan and report, but can't identify things in the image.
 
 ## Object detection ("YOLO stream")
 

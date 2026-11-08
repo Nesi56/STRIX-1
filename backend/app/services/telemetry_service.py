@@ -169,6 +169,10 @@ class TelemetryService:
                 next_t = loop.time()
             await asyncio.sleep(max(0.0, delay))
 
+    def broadcast_chat(self, msg: dict[str, Any]) -> None:
+        """Push an unsolicited agent message (e.g. a YOLO watch comment). Call on the loop."""
+        self.manager.broadcast({"type": "chat", "message": msg})
+
     def broadcast_event(self, ev: dict[str, Any]) -> None:
         """Thread-safe: events may originate from device threads."""
         loop = self._loop

@@ -75,3 +75,17 @@ def test_detections_are_logged(client):
     wait_for(lambda: (c.db.flush() or True) and c.db.query("SELECT COUNT(*) AS n FROM observations")[0]["n"] > 0, timeout=8)
     row = c.db.query("SELECT source, kind, data FROM observations ORDER BY id DESC LIMIT 1")[0]
     assert row["kind"] == "detections" and row["source"] == "synthetic"
+
+
+def test_one_button_recording(client):
+    wait_for(lambda: client.get("/api/camera/status").json()["frame_seq"] > 0)
+    r = client.post("/api/record/start", json={}).json()
+    assert r["video"] and r["video_error"] is None and r["status"]["active"] is True
+    assert client.get("/api/camera/status").json()["recording"]["active"] is True
+    assert client.post("/api/record/start", json={}).status_code == 409
+    time.sleep(1.0)
+    r = client.post("/api/record/stop").json()
+    assert r["active"] is False and r["video"]
+    assert client.get("/api/camera/status").json()["recording"]["active"] is False
+    s = client.get(f"/api/recordings/{r['stopped']}").json()
+    assert s["metadata"]["video"] == r["video"] and s["samples"] > 0

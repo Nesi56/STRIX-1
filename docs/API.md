@@ -54,6 +54,9 @@ Errors use one shape: `{"error": {"code": "...", "message": "...", "details": [.
 | GET | `/api/ai/status` | — | Qwen / llama-server status |
 | POST | `/api/agent/run` | `{task}` | Run a Qwen agent task — streaming NDJSON (below); 409 if busy |
 | POST | `/api/agent/stop` | — | Cancel the running task |
+| POST | `/api/agent/watch` | `{enabled}` | Qwen comments automatically on new YOLO detections (WATCH mode) |
+| POST | `/api/record/start` | `{name?, notes?}` | **One-button recording**: telemetry session + camera video together |
+| POST | `/api/record/stop` | — | Stop both; the video file name is stored in the session's metadata |
 | GET | `/api/agent` | — | Agent state (status, active node, plan) |
 | GET / DELETE | `/api/agent/history` | `limit` | Chat history / clear |
 | POST | `/api/ai/qwen/{start\|stop\|restart}` | — | Control llama-server when `QWEN_MANAGE_SERVER=true` |
@@ -84,6 +87,7 @@ The response is `application/x-ndjson`, one event per line:
 | `progress` | `text` (e.g. scan progress per tilt angle) |
 | `observation` | `text` (objects seen before a step) |
 | `suggestions` | `items[]` — deterministic movement advice for the pilot |
+| `vision` | `image_sent` (camera frame attached for the vision model), `vision_capable` |
 | `delta` / `replace` | report text (sanitized) |
 | `error` | `code`, `message` (e.g. Qwen report failed → rule-based report follows) |
 | `done` | `planner`, `reporter`, `stats` (`latency_ms`, `tokens_per_s`, …), `total_ms` |
@@ -103,6 +107,7 @@ Server → client (JSON text frames):
   Once per second the message also has `"full": true` plus `imu_health`, `imu_calibration`,
   `environment`, `servo`, `camera`, `system`, `ai`, `detector`, `mapping`, `recording`.
 - `{"type":"event","event":{"ts","level","source","message"}}`
+- `{"type":"chat","message":{"id","ts","auto":true,"provider":"qwen|rules","vision","text"}}` (WATCH-mode comments on YOLO detections)
 - `{"type":"pong","client_ts","server_ts"}` (milliseconds) in reply to a ping.
 
 Client → server: `{"type":"ping","client_ts": <ms>}`. The dashboard pings every 2 s for RTT and

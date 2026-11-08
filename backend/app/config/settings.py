@@ -138,6 +138,9 @@ class Settings(BaseSettings):
     agent_max_plan_steps: int = Field(5, ge=1, le=10)
     agent_skill_timeout_s: float = Field(12.0, ge=2.0, le=60.0)
     agent_standoff_m: float = Field(1.5, ge=0.3, le=20.0)  # distance used for approach suggestions
+    agent_watch: bool = True  # Qwen comments automatically when YOLO sees new objects
+    agent_watch_interval_s: float = Field(20.0, ge=5.0, le=600.0)  # minimum gap between watch comments
+    agent_image_px: int = Field(448, ge=224, le=1280)  # width of camera frames sent to a Qwen vision model
     vo_enabled: bool = False
 
     # -------------------------------------------------------------- local Qwen

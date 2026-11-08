@@ -148,9 +148,7 @@ export function ManualControls() {
         <div className="mt-0.5 flex justify-between text-[9.5px] text-dim"><span>{lo.toFixed(0)}° down</span><span>level</span><span>{hi.toFixed(0)}° up</span></div>
         {!sv?.available && <div className="mt-1 text-[10.5px] text-crit">{sv?.status.error ?? "servo unavailable"}</div>}
       </div>
-      <p className="mt-2 text-[10px] leading-snug text-dim">
-        Keys and Qwen move only the camera tilt servo (GPIO{sv?.gpio ?? 18}), within safe limits and rate-limited. STRIX-1 never sends flight commands; SG90 angles are commanded, not measured.
-      </p>
+      <p className="mt-1.5 text-[10px] leading-snug text-dim">Moves only the camera tilt servo (GPIO{sv?.gpio ?? 18}) — never the drone.</p>
     </ConsolePanel>
   );
 }

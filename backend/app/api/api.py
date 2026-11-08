@@ -29,6 +29,7 @@ from app.models.schemas import (
     ServoNudgeRequest,
     ServoSpeedRequest,
     VORequest,
+    WatchRequest,
 )
 from app.services.agent_service import AgentBusy
 from app.services.camera_service import CameraError, list_media, safe_media_path
@@ -490,6 +491,12 @@ async def agent_stop(request: Request) -> dict[str, Any]:
     return {"cancelled": c.agent.stop("stopped by operator"), "agent": c.agent.snapshot()}
 
 
+@router.post("/agent/watch")
+async def agent_watch(body: WatchRequest, request: Request) -> dict[str, Any]:
+    """Turn automatic Qwen comments on new YOLO detections on/off."""
+    return get_container(request).agent.set_watch(body.enabled)
+
+
 @router.get("/agent/history")
 async def agent_history(request: Request, limit: int = Query(100, ge=1, le=500)) -> list[dict[str, Any]]:
     return await asyncio.to_thread(get_container(request).agent.history, limit)
@@ -539,6 +546,46 @@ def _rec_call(fn, *args):
     except RecordingError as exc:
         status = 404 if "not found" in str(exc) else 409
         raise err(status, "recording_error", str(exc)) from exc
+
+
+@router.post("/record/start")
+async def record_start(request: Request, body: RecordingStartRequest | None = None) -> dict[str, Any]:
+    """One button: start a telemetry session and, if the camera is available, a video recording."""
+    c = get_container(request)
+    body = body or RecordingStartRequest()
+    try:
+        st = await c.recording.start_session(body.name or time.strftime("Flight %Y-%m-%d %H:%M:%S"), body.notes)
+    except RecordingError as exc:
+        raise err(409, "recording_error", str(exc)) from exc
+    sid = st["session"]["id"]
+    video, video_error = None, None
+    if c.camera.available:
+        try:
+            if not c.camera.recording.active:
+                await asyncio.to_thread(c.camera.start_recording)
+            video = c.camera.recording_status()["file"]
+            c.recording.set_metadata(sid, "video", video)
+        except CameraError as exc:
+            video_error = str(exc)
+    else:
+        video_error = "camera unavailable"
+    return {"session_id": sid, "video": video, "video_error": video_error, "status": c.recording.status()}
+
+
+@router.post("/record/stop")
+async def record_stop(request: Request) -> dict[str, Any]:
+    c = get_container(request)
+    video = None
+    if c.camera.recording.active:
+        try:
+            video = (await asyncio.to_thread(c.camera.stop_recording))["file"]
+        except CameraError:
+            pass
+    if c.recording.active_session:
+        res = await c.recording.stop_session()
+    else:
+        res = c.recording.status()
+    return {**res, "video": video}
 
 
 @router.get("/recordings")

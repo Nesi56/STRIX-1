@@ -109,21 +109,16 @@ STRIX_SERVO_MAX_ANGLE=150
 
 Restart after changes: `sudo systemctl restart strix1` (or re-run `scripts/run_backend.sh`).
 
-## 6. Local Qwen model (llama.cpp)
+## 6. AI: YOLO + local Qwen vision model (one command)
 
 ```bash
-scripts/build_llama_cpp.sh                    # builds ~/llama.cpp/build/bin/llama-server (10–20 min)
-scripts/download_qwen.sh                      # Qwen2.5-3B-Instruct Q4_K_M (~2 GB) into ~/STRIX-1/models/
-scripts/install_llama_service.sh ~/STRIX-1/models/qwen2.5-3b-instruct-q4_k_m.gguf 3 4096
-curl -s http://127.0.0.1:8080/health          # {"status":"ok"} once loaded
+cd ~/STRIX-1 && scripts/setup_ai.sh
 ```
 
-Then in `.env`: `QWEN_ENABLED=true`, `QWEN_SERVER_URL=http://127.0.0.1:8080`,
-`QWEN_MODEL_ID=qwen2.5-3b-instruct-q4_k_m`. The dashboard shows *LOADING* until the model is
-ready and stays fully usable meanwhile. Model options, vision models and performance: [AI.md](AI.md).
-
-Alternative: `QWEN_MANAGE_SERVER=true` with `QWEN_LLAMA_SERVER_BIN`/`QWEN_MODEL_PATH`, which
-makes the backend start llama-server itself (with nice 5 and a free-memory check).
+This installs the YOLO detector, builds llama.cpp, downloads Qwen2.5-VL-3B (vision), installs the
+`strix1-llama` service, updates `.env` and restarts STRIX-1. Run it inside `tmux`, since it takes 20–30 minutes.
+Use `--fast` for the smaller Qwen2-VL-2B. When it finishes, the **QWEN** row in the dashboard's
+SYSTEM STATUS corner turns green and reads `ready · vision`. Details: [AI.md](AI.md).
 
 ## 7. Object detection model (YOLO stream)
 

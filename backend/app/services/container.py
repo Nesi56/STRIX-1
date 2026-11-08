@@ -80,6 +80,7 @@ class Container:
         await self._safe("mapping", self.mapping.start)
         await self._safe("telemetry", self.telemetry.start)
         await self._safe("qwen", self.qwen.start)
+        await self._safe("agent", self.agent.start)
         self.started = True
         mode = "SYNTHETIC DEMO MODE" if self.settings.mock else "hardware mode"
         self.events.add("info", "system", f"STRIX-1 backend started ({mode})")
@@ -94,6 +95,7 @@ class Container:
             except Exception:
                 log.exception("%s shutdown error", name)
         self.agent.stop("backend shutting down")
+        await self.agent.shutdown()
         for name, fn in (("detector", self.detector.stop), ("servo", self.servo.stop), ("camera", self.camera.stop), ("dht11", self.dht.stop),
                          ("imu", self.imu.stop), ("system", self.system.stop)):
             try:

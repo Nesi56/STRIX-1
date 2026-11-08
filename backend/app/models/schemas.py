@@ -65,3 +65,7 @@ class RecordingUpdateRequest(_Strict):
 
 class VORequest(_Strict):
     enabled: bool
+
+
+class WatchRequest(_Strict):
+    enabled: bool

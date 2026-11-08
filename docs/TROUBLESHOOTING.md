@@ -26,6 +26,22 @@ Logs first: `journalctl -u strix1 -f` (or the terminal running `scripts/run_back
 | 60 fps not offered | No sensor mode supports it at that resolution (IMX708: 720p60 yes, 1080p60 no). Run `scripts/verify_camera.sh`. |
 | Recording is a `.h264` file | PyAV is missing (`sudo apt install python3-av`). Raw H.264 plays in VLC or converts with `ffmpeg -i x.h264 -c copy x.mp4`. |
 
+## A row in SYSTEM STATUS is red
+
+The line under each red row shows the backend's exact reason (hover for the full text). The usual ones:
+
+| Row / message | Fix |
+|---|---|
+| MPU6050 · `/dev/i2c-1 missing` or `No such file` | I2C is off: `sudo raspi-config nonint do_i2c 0`, then reboot. |
+| MPU6050 · `No module named 'board'` | Hardware libraries are missing: `backend/.venv/bin/pip install -r backend/requirements-pi.txt` |
+| MPU6050 · `Remote I/O error` / `Failed to find MPU6050` | Wiring: VIN→pin 1, GND→pin 6, SDA→pin 3, SCL→pin 5; check `i2cdetect -y 1` shows `68`. |
+| DHT11 · `no dht11 IIO device found` | Add `dtoverlay=dht11,gpiopin=4` to `/boot/firmware/config.txt` and reboot (or run `scripts/install_pi.sh --skip-apt --skip-frontend --configure-boot`). |
+| QWEN · `not running` | `scripts/setup_ai.sh` (installs and starts it). Logs: `journalctl -u strix1-llama -f`. |
+| YOLO · `HOG fallback` | `scripts/get_detector_model.sh`, then restart. |
+| BATTERY · `no fuel gauge` | Expected: a USB power bank does not report its charge to the Pi. The row still warns about under-voltage. |
+
+Then run `scripts/verify_all.sh` (stop STRIX-1 first so the camera is free) and compare.
+
 ## IMU (MPU6050)
 
 | Symptom | Check / fix |

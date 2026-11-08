@@ -182,6 +182,14 @@ class RecordingService:
             self.db.execute("UPDATE sessions SET notes=? WHERE id=?", (notes, session_id))
         return self.get_session(session_id)
 
+    def set_metadata(self, session_id: int, key: str, value: Any) -> None:
+        row = self.db.query_one("SELECT metadata FROM sessions WHERE id=?", (session_id,))
+        if row is None:
+            raise RecordingError(f"session {session_id} not found")
+        meta = json.loads(row["metadata"] or "{}")
+        meta[key] = value
+        self.db.execute("UPDATE sessions SET metadata=? WHERE id=?", (json.dumps(meta), session_id))
+
     def delete_session(self, session_id: int) -> None:
         if self.active_session and self.active_session["id"] == session_id:
             raise RecordingError("stop the session before deleting it")

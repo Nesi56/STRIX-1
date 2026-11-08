@@ -1,10 +1,10 @@
 # STRIX-1 — AI camera operator for a Raspberry Pi 5 drone
 
 STRIX-1 turns a **Raspberry Pi 5** on a 250 mm FPV quadcopter (SpeedyFPV ZMR250) into an AI camera
-operator. A **local Qwen model** sees through **YOLO**, reads the **MPU6050** (motion) and **DHT11**
-(temperature/humidity), **aims the camera with a servo**, **estimates distances** to what it sees
-and **suggests how to move** to complete a task. You watch and talk to it from any browser on the
-same Wi-Fi; no VNC or monitor needed.
+operator. A **local Qwen vision model** looks at the camera image and **identifies** what it sees,
+reacts to **YOLO** detections, reads the **MPU6050** (motion) and **DHT11** (temperature/humidity),
+**aims the camera with a servo**, **estimates distances** and **suggests how to move**. Everything is
+on one screen in any browser on the same Wi-Fi; no VNC or monitor needed.
 
 > **Judges:** start with **[docs/JUDGES.md](docs/JUDGES.md)** for a 3-minute demo script.
 
@@ -34,13 +34,15 @@ same Wi-Fi; no VNC or monitor needed.
 
 | Feature | Details |
 |---|---|
-| **Qwen agent** | Plans with schema-constrained JSON (always valid, even for a 1.5–3 B model), then runs camera skills: `look`, `tilt`, `center`, `scan`, `find`, `track`, `wait`. It reports with `[MEASURED]` / `[DETECTED]` / `SUGGEST:` tags. If Qwen is offline, a labeled keyword planner and rule-based report stand in. → [docs/AI.md](docs/AI.md) |
+| **Qwen agent** | Plans with schema-constrained JSON (always valid, even for a 2–3 B model), then runs camera skills: `look`, `tilt`, `center`, `scan`, `find`, `track`, `wait`. It reports with `[SEEN]` / `[DETECTED]` / `[MEASURED]` / `SUGGEST:` tags. If Qwen is offline, a labeled keyword planner and rule-based report stand in. → [docs/AI.md](docs/AI.md) |
+| **Qwen vision** | With the Qwen2.5-VL model (`scripts/setup_ai.sh`), "identify this" / "what do you see" sends the current camera frame to Qwen, which describes it (`[SEEN]`). It is not limited to YOLO's 80 classes. |
+| **YOLO watch** | With WATCH ON, Qwen speaks up by itself when YOLO detects new objects: what, how far, which way, and a suggestion. |
 | **YOLO stream** | ONNX detector (YOLOX-S by default, YOLO11n/YOLOv8 supported) running continuously. Green boxes on the video show `person 0.88 · ~5.4 m`. Prompts choose the classes (COCO-80). |
 | **Distance & direction** | Pinhole model with typical object heights (HFOV 102°), labeled as estimates (±30 %). Bearing comes from image position; the radar shows a top-down view. |
 | **Suggestions** | Computed from geometry and sensors, e.g. "Yaw right ~15°", "Advance ~3.9 m to a 1.5 m standoff", "Level the airframe first". |
 | **Sensors** | MPU6050 at 100 Hz with a complementary filter (roll/pitch, *relative* yaw: no magnetometer), calibration and health checks. DHT11 through the Pi 5 kernel driver. |
 | **Manual control** | Keyboard: E enable, W/S or ↑/↓ tilt, C center, Space emergency stop, Esc stop agent. Speed and step sliders. |
-| **Console UI** | One screen: controls · live video · agent graph / radar / sensor data / 3D attitude · chat. Secondary views: recordings (SQLite sessions, playback, CSV/JSON), system health, calibration. |
+| **One-screen console** | Status corner (camera, YOLO, Qwen, MPU6050, DHT11, servo, battery/power) · manual controls · YOLO prompts · live video · 3D drone driven by the IMU · agent graph / radar / recordings tabs · Qwen chat. **Start recording** saves the camera video and all sensor data together. |
 | **Demo mode** | `STRIX_MOCK=true` gives a synthetic camera scene, IMU and DHT with ground-truth detections, all labeled **SYNTHETIC**. A missing real device shows *disconnected*, never fake data. |
 
 ## Quick start (no hardware, any laptop)
@@ -52,7 +54,7 @@ scripts/run_mock.sh                                     # prints the access toke
 ```
 
 Open <http://localhost:8000>, sign in with the token, press **E**, then ask the chat:
-*"Find the person and keep them centered"*.
+*"Find the person and keep them centered"* or *"move the servo please"*.
 
 ## On the Raspberry Pi 5
 
@@ -62,9 +64,7 @@ Full guide: **[docs/SETUP_PI.md](docs/SETUP_PI.md)** · wiring: **[docs/HARDWARE
 git clone https://github.com/Nesi56/STRIX-1.git ~/STRIX-1 && cd ~/STRIX-1
 scripts/install_pi.sh                                    # packages, venv, .env + token, dashboard build
 scripts/install_pi.sh --skip-apt --skip-frontend --configure-boot --groups && sudo reboot
-scripts/get_detector_model.sh                            # YOLOX-S detector (checksum-verified)
-scripts/build_llama_cpp.sh && scripts/download_qwen.sh   # local Qwen
-scripts/install_llama_service.sh ~/STRIX-1/models/qwen2.5-3b-instruct-q4_k_m.gguf 3 4096
+scripts/setup_ai.sh                                      # YOLO detector + llama.cpp + Qwen vision model, one command
 scripts/verify_all.sh                                    # IMU, DHT11, camera, power checks
 scripts/install_pi.sh --skip-apt --skip-frontend --systemd   # autostart
 ```
@@ -126,6 +126,7 @@ Built and tested without the physical drone (x86-64 Linux, demo mode, headless b
 - detector FPS on the Pi 5 CPU
 - Qwen speed and plan quality
 - the YOLO11n export path
+- `scripts/setup_ai.sh` end to end, and Qwen-VL image latency on the Pi 5 CPU
 - the servo tilt direction (`STRIX_SERVO_UP_IS_POSITIVE`)
 - the 52Pi board's servo power capacity
 

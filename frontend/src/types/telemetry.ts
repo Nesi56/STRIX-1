@@ -144,7 +144,7 @@ export interface AgentState {
   status: "idle" | "running" | "done" | "stopped" | "error";
   node: "generator" | "observer" | "pilot" | "until" | "report" | "complete" | null;
   plan: PlanStep[]; task: string | null; run_id: string | null; planner: "qwen" | "rules" | null;
-  step: number | null; error: string | null;
+  step: number | null; error: string | null; watch?: boolean;
 }
 
 export interface LocalizationSource {

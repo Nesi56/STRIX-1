@@ -1,6 +1,6 @@
-import { Bot, Check, Copy, Loader2, Minus, Send, Square, Trash2, X } from "lucide-react";
+import { Bot, Check, Copy, Eye, Loader2, Minus, ScanSearch, Send, Square, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useTelemetry } from "../../hooks/useTelemetry";
+import { telemetry, useTelemetry } from "../../hooks/useTelemetry";
 import { del, errorMessage, get, post, streamNdjson } from "../../services/api";
 import type { AIStats, PlanStep } from "../../types/telemetry";
 import { copyText, RichText } from "../common/RichText";
@@ -8,11 +8,11 @@ import { useToast } from "../common/toast";
 import { ConsolePanel } from "./ConsolePanel";
 
 const QUICK = [
+  "Identify what you see",
+  "Move the servo up",
   "Find the person and keep them centered",
   "How far away is the person and how should I move?",
-  "Scan the area and tell me what you see",
-  "Look up 15 degrees",
-  "Is the IMU behaving normally?",
+  "Scan the area",
   "What are the temperature and humidity?",
 ];
 
@@ -30,6 +30,8 @@ interface Turn {
   stats?: AIStats;
   reporter?: string;
   totalMs?: number;
+  auto?: boolean;
+  vision?: boolean;
 }
 
 interface HistoryRow { id: number; ts: number; role: string; content: string; provider: string | null; meta: Record<string, unknown> }
@@ -59,11 +61,18 @@ export function ChatPanel() {
         : { id: `h${r.id}`, role: "agent" as const, text: r.content, planner: (r.meta.planner as string) ?? null,
             steps: (r.meta.plan as PlanStep[]) ?? [], suggestions: (r.meta.suggestions as string[]) ?? [],
             thought: r.meta.thought as string, status: "done" as const, reporter: r.provider ?? undefined,
-            stats: r.meta.stats as AIStats }));
+            stats: r.meta.stats as AIStats, auto: !!r.meta.auto, vision: !!r.meta.vision }));
     }).catch(() => {});
     const onReset = () => setTurns([]);
     window.addEventListener("strix:reset", onReset);
-    return () => window.removeEventListener("strix:reset", onReset);
+    // Qwen's automatic comments on new YOLO detections arrive over the WebSocket.
+    const off = telemetry.onChat((m) => setTurns((ts) => [...ts, {
+      id: `w${m.id}`, role: "agent", text: m.text, auto: true, reporter: m.provider, vision: m.vision, status: "done",
+    }]));
+    return () => {
+      window.removeEventListener("strix:reset", onReset);
+      off();
+    };
   }, []);
 
   useEffect(() => {
@@ -109,6 +118,9 @@ export function ChatPanel() {
           case "stopped":
             update(id, (x) => ({ ...x, status: "stopped", error: `stopped: ${ev.reason as string}` }));
             break;
+          case "vision":
+            update(id, (x) => ({ ...x, vision: !!ev.image_sent }));
+            break;
           case "done":
             update(id, (x) => ({ ...x, status: "done", stats: ev.stats as AIStats, reporter: ev.reporter as string, totalMs: ev.total_ms as number }));
             break;
@@ -120,6 +132,15 @@ export function ChatPanel() {
       update(id, (x) => (x.status === "running" ? { ...x, status: "done" } : x));
       setBusy(false);
       abort.current = null;
+    }
+  };
+
+  const watch = !!st?.agent?.watch;
+  const toggleWatch = async () => {
+    try {
+      await post("/api/agent/watch", { enabled: !watch });
+    } catch (e) {
+      toast(errorMessage(e), "error");
     }
   };
 
@@ -139,7 +160,14 @@ export function ChatPanel() {
       bodyClassName="!p-0 flex flex-col"
       actions={
         <>
-          <span className="rounded-[3px] border border-blue/50 bg-blue/10 px-1.5 text-[10px] tracking-wider text-blue">TEXT</span>
+          <button className={`rounded-[3px] border px-1.5 text-[10px] tracking-wider ${watch ? "border-accent-dim bg-[#173a27] text-accent" : "border-line-2 text-muted"}`}
+            title="When YOLO sees something new, Qwen comments automatically" onClick={() => void toggleWatch()}>
+            <Eye size={10} className="mr-0.5 inline" />WATCH {watch ? "ON" : "OFF"}
+          </button>
+          <button className="rounded-[3px] border border-blue/50 bg-blue/10 px-1.5 text-[10px] tracking-wider text-blue disabled:opacity-40"
+            disabled={busy} title="Ask Qwen to identify what the camera sees" onClick={() => void run("Identify what you see in the camera view")}>
+            <ScanSearch size={10} className="mr-0.5 inline" />IDENTIFY
+          </button>
           <span className={`rounded-[3px] border px-1.5 text-[10px] tracking-wider ${qwen?.state === "ready" ? "border-accent-dim bg-[#173a27] text-accent" : "border-warn/50 text-warn"}`}
             title={qwen?.detail ?? undefined}>
             QWEN {qwen?.state === "ready" ? (qwen.last?.tokens_per_s ? `${qwen.last.tokens_per_s.toFixed(1)} t/s` : "READY") : (qwen?.state ?? "…").toUpperCase()}
@@ -148,11 +176,17 @@ export function ChatPanel() {
         </>
       }
     >
+      {qwen && qwen.state !== "ready" && (
+        <div className="border-b border-warn/30 bg-warn/5 px-2.5 py-1 text-[10.5px] text-warn">
+          {qwen.state === "loading" ? "Qwen is loading its model…" : "Qwen is not running on the Pi — answers use the keyword planner. To install it, on the Pi run: scripts/setup_ai.sh"}
+        </div>
+      )}
       <div ref={scroller} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5 text-[12px]">
         {turns.length === 0 && (
           <div className="space-y-2 text-muted">
-            <p>Give Qwen a task. It plans camera moves, drives the tilt servo, reads the MPU6050, DHT11 and YOLO detections,
-              estimates distances and suggests how to move.{qwen?.state !== "ready" && <span className="text-warn"> Qwen is {qwen?.state ?? "offline"} — a keyword planner and rule-based report stand in.</span>}</p>
+            <p>Talk to Qwen. It moves the camera servo, looks at the camera image{qwen?.vision_capable ? "" : " (with the vision model)"}, reads the MPU6050,
+              DHT11 and YOLO detections, estimates distances and suggests how to move. With <span className="text-accent">WATCH ON</span> it
+              speaks up by itself when YOLO spots something new.</p>
             <div className="flex flex-wrap gap-1">
               {QUICK.map((q) => <button key={q} className="btn btn-sm !normal-case !tracking-normal" onClick={() => void run(q)}>{q}</button>)}
             </div>
@@ -163,9 +197,11 @@ export function ChatPanel() {
         ) : (
           <div key={t.id} className="mr-2 rounded-[3px] border border-line bg-[#0d100e] px-2 py-1.5">
             <div className="mb-1 flex items-center gap-1.5 text-[10px] tracking-wider">
-              <Bot size={12} className="text-accent" />
-              <span className="text-accent">QWEN AGENT</span>
+              {t.auto ? <Eye size={12} className="text-accent" /> : <Bot size={12} className="text-accent" />}
+              <span className="text-accent">{t.auto ? "YOLO WATCH" : "QWEN AGENT"}</span>
+              {t.auto && <span className="rounded-[3px] border border-line-2 px-1 text-muted">{t.reporter === "qwen" ? "QWEN" : "RULES"}</span>}
               {t.planner && <span className="rounded-[3px] border border-line-2 px-1 text-muted">{t.planner === "qwen" ? "QWEN PLAN" : "RULE PLAN"}</span>}
+              {t.vision && <span className="rounded-[3px] border border-synth/40 px-1 text-synth">SAW CAMERA IMAGE</span>}
               {t.status === "running" && <Loader2 size={11} className="animate-spin text-accent" />}
               {t.status === "done" && t.text && (
                 <button className="ml-auto text-muted hover:text-text" title="Copy" onClick={() => void copyText(t.text).then((ok) => toast(ok ? "Copied" : "Copy failed", ok ? "ok" : "error"))}>

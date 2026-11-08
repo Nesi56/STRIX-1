@@ -10,6 +10,10 @@ import type { ImuSample, TelemetryEvent, TelemetryState } from "../types/telemet
 
 export type ConnState = "connecting" | "open" | "stale" | "closed" | "unauthorized";
 
+export interface AgentChatMessage {
+  id: string; ts: number; role: "assistant"; auto: boolean; provider: "qwen" | "rules"; vision: boolean; text: string;
+}
+
 export interface Snapshot {
   conn: ConnState;
   state: TelemetryState | null;
@@ -35,6 +39,7 @@ class TelemetryStore {
   clock = new ClockSync();
   private ws: WebSocket | null = null;
   private listeners = new Set<() => void>();
+  private chatListeners = new Set<(m: AgentChatMessage) => void>();
   private emitTimer: number | null = null;
   private retryTimer: number | null = null;
   private pingTimer: number | null = null;
@@ -48,6 +53,14 @@ class TelemetryStore {
   };
 
   getSnapshot = () => this.snap;
+
+  /** Unsolicited agent messages (e.g. Qwen commenting on new YOLO detections). */
+  onChat = (fn: (m: AgentChatMessage) => void) => {
+    this.chatListeners.add(fn);
+    return () => {
+      this.chatListeners.delete(fn);
+    };
+  };
 
   private set(patch: Partial<Snapshot>, immediate = false) {
     this.snap = { ...this.snap, ...patch };
@@ -158,6 +171,12 @@ class TelemetryStore {
         const s = computeSample(Number(msg.client_ts), Number(msg.server_ts), now);
         this.clock.add(s);
         this.set({ rttMs: s.rttMs, offsetMs: this.clock.offsetMs, lastMessageAt: now });
+        break;
+      }
+      case "chat": {
+        const m = msg.message as AgentChatMessage;
+        this.chatListeners.forEach((fn) => fn(m));
+        this.set({ lastMessageAt: now });
         break;
       }
       case "event": {

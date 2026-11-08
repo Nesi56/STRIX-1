@@ -7,19 +7,18 @@ on the drone, with no cloud.
 
 ![console](img/dashboard.png)
 
-## What you are looking at
+## What you are looking at (one screen)
 
 | Area | What it shows | Try |
 |---|---|---|
-| **Top bar** | Live status of the YOLO stream, Qwen, MPU6050 (motion), DHT11 (temp/humidity) and the Wi-Fi link (round-trip ms). Red **EMERGENCY STOP**, green **RESET SESSION**. | Press **Space** at any time → servo control disabled and agent cancelled. |
-| **Manual controls** (left) | Keyboard control of the camera tilt servo, speed and step sliders, current tilt. | **E** enable · **W/↑** tilt up · **S/↓** tilt down · **C** center |
-| **YOLO prompts** (left) | Which object classes are drawn on the video. | Type `car` and press Enter. |
-| **Live video** (center) | Camera feed with green boxes: `person 0.88 · ~5.4 m` = class, confidence, estimated distance. `>> PROMPTS:` shows the active classes. Top right: received FPS, capture-to-browser latency, YOLO FPS. | Watch the boxes follow the people. |
-| **Agent graph** (right) | Qwen's pipeline: **GENERATOR** (plans) → **OBSERVER → PILOT → UNTIL** (executes) → **REPORT**. The active stage glows green; the plan's steps tick off below. | Run a task and watch it. |
-| **Radar** | Top-down view of detected objects at their estimated range and bearing inside the camera's field of view. | |
-| **Sensor data** | MPU6050 attitude (roll/pitch/yaw), artificial horizon, roll/pitch chart, DHT11, servo, CPU/temperature/power. | |
-| **3D attitude** | 3D model of the 250 mm quadcopter moving with the IMU; the camera tilts with the servo. | Drag to orbit. |
-| **Chat** | Give Qwen a task in plain English. | See the demo script below. |
+| **System status** (top-left corner) | Camera, YOLO, Qwen, MPU6050, DHT11, servo and battery/power. Red rows show the reason. | — |
+| **Manual controls** | Keyboard control of the camera tilt servo, speed and step sliders, current tilt. | **E** enable · **W/↑** up · **S/↓** down · **C** center |
+| **YOLO prompts** | Which object classes are drawn on the video. | Type `car` and press Enter. |
+| **Live video** (center) | Camera feed with green boxes: `person 0.88 · ~5.4 m` = class, confidence, estimated distance. | Watch the boxes follow the people. |
+| **Drone · IMU simulation** (below the video) | 3D model of the 250 mm quad moving with the MPU6050, artificial horizon, roll/pitch/yaw, DHT11. | Drag to orbit; tilt the real drone. |
+| **Agent graph / Radar / Recordings** (top-right tabs) | Qwen's pipeline lighting up stage by stage · a top-down radar of objects by distance and bearing · saved recordings with video, CSV and JSON. | |
+| **Chat** | Talk to Qwen. **WATCH ON**: Qwen comments by itself when YOLO sees something new. **IDENTIFY**: Qwen looks at the camera image. | See the demo script below. |
+| **Top bar** | **Start recording** (video + sensors) · **EMERGENCY STOP** (also Space) · **RESET SESSION** | |
 
 ## 3-minute demo script
 
@@ -34,10 +33,11 @@ Works on the real drone or in demo mode (`scripts/run_mock.sh`, clearly marked
      the % of frames centered).
    - REPORT → e.g. "[DETECTED] person 0.92, ~5.4 m, 15° right … SUGGEST: Yaw right ~15° … Advance
      ~3.9 m to reach a 1.5 m standoff".
-3. **Open RADAR**: the same person appears at ~5 m, 15° right.
-4. **Ask: "Scan the area and tell me what you see"**: the camera sweeps its tilt range and lists
+3. **Press IDENTIFY**: Qwen looks at the camera image and describes it (`[SEEN]`), beyond YOLO's labels.
+4. **Open RADAR**: the same person appears at ~5 m, 15° right.
+5. **Ask: "Scan the area and tell me what you see"**: the camera sweeps its tilt range and lists
    what it saw at each angle.
-5. **Press Space (EMERGENCY STOP)** during a task: the run stops immediately and servo control
+6. **Press Space (EMERGENCY STOP)** during a task: the run stops immediately and servo control
    is disabled.
 
 ## Why it is technically interesting

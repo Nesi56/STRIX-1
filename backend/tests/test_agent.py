@@ -19,7 +19,8 @@ def sse(chunks):
 class FakeLlama:
     """Simulated llama-server: JSON-schema plans (non-stream) and streamed reports."""
 
-    def __init__(self, plan=None, report="[MEASURED] roll 2.0°. SUGGEST: hold position.", raw_plan_text=None):
+    def __init__(self, plan=None, report="[MEASURED] roll 2.0°. SUGGEST: hold position.", raw_plan_text=None, vision=False):
+        self.vision = vision
         self.plan = plan if plan is not None else {"thought": "tilt up", "target": "", "plan": [{"skill": "tilt", "delta": 15}]}
         self.report = report
         self.raw_plan_text = raw_plan_text
@@ -29,7 +30,7 @@ class FakeLlama:
         if request.url.path == "/health":
             return httpx.Response(200, json={"status": "ok"})
         if request.url.path == "/props":
-            return httpx.Response(200, json={"modalities": {"vision": False}, "default_generation_settings": {"n_ctx": 4096}})
+            return httpx.Response(200, json={"modalities": {"vision": self.vision}, "default_generation_settings": {"n_ctx": 4096}})
         if request.url.path == "/v1/chat/completions":
             body = json.loads(request.content)
             self.requests.append(body)
@@ -191,6 +192,64 @@ def test_ai_status_is_qwen_only(client):
     assert client.post("/api/ai/chat", json={"message": "x"}).status_code in (404, 405)
 
 
+@pytest.mark.parametrize("task,tilt,expected", [
+    ("move the servo please", 0.0, [{"skill": "tilt", "delta": 20.0}]),
+    ("move the camera", 30.0, [{"skill": "tilt", "delta": -20.0}]),
+    ("look at the floor", 0.0, [{"skill": "look", "tilt": -45.0}]),
+    ("point at the ceiling", 0.0, [{"skill": "look", "tilt": 45.0}]),
+    ("look up a little", 0.0, [{"skill": "tilt", "delta": 8.0}]),
+    ("tilt down 25 degrees", 0.0, [{"skill": "tilt", "delta": -25.0}]),
+    ("look straight ahead", 20.0, [{"skill": "center"}]),
+    ("tilt all the way up", 0.0, [{"skill": "look", "tilt": 90.0}]),
+    ("test the servo", 0.0, [{"skill": "tilt", "delta": 20}, {"skill": "tilt", "delta": -40}, {"skill": "center"}]),
+])
+def test_rule_plan_servo_phrases(task, tilt, expected):
+    assert rule_plan(task, COCO80, tilt)[1] == expected
+
+
+def test_rule_plan_explains_left_right():
+    target, plan, note = rule_plan("turn the camera left", COCO80)
+    assert plan == [] and "only tilts" in note
+
+
+def test_move_the_servo_please_moves_it(client):
+    client.post("/api/servo/arm")
+    before = client.get("/api/servo").json()["tilt_deg"]
+    evs = run(client, "move the servo please")
+    assert by_type(evs, "step")[-1]["status"] == "done"
+    after = client.get("/api/servo").json()["tilt_deg"]
+    assert abs(after - before) == pytest.approx(20, abs=1.5)
+    assert "No direction given" in final_text(evs)
+
+
+def test_visual_question_sends_camera_image_to_vision_model(client):
+    fake = FakeLlama(plan={"thought": "look", "target": "", "plan": []}, report="[SEEN] a person in a red shirt.", vision=True)
+    use_fake(client, fake)
+    client.app.state.container.qwen.vision_capable = True  # the poller would also learn this from /props
+    wait_for(lambda: client.get("/api/camera/status").json()["frame_seq"] > 0)
+    evs = run(client, "identify this")
+    assert by_type(evs, "vision")[0]["image_sent"] is True and evs[-1]["vision"] is True
+    report_req = [r for r in fake.requests if r.get("stream")][-1]
+    content = report_req["messages"][-1]["content"]
+    assert isinstance(content, list) and content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert "[SEEN]" in final_text(evs)
+
+
+def test_text_only_model_never_gets_images(client):
+    fake = FakeLlama(plan={"thought": "look", "target": "", "plan": []})
+    use_fake(client, fake)
+    client.app.state.container.qwen.vision_capable = False
+    evs = run(client, "what do you see?")
+    assert by_type(evs, "vision")[0]["image_sent"] is False
+    content = [r for r in fake.requests if r.get("stream")][-1]["messages"][-1]["content"]
+    assert isinstance(content, str) and "text-only" in content
+
+
+def test_rules_report_explains_missing_vision(client):
+    evs = run(client, "identify this")
+    assert "Qwen vision model" in final_text(evs)
+
+
 @pytest.mark.parametrize("task,expected", [
     ("look up 20 degrees", [{"skill": "tilt", "delta": 20.0}]),
     ("tilt down", [{"skill": "tilt", "delta": -15}]),
@@ -202,6 +261,51 @@ def test_ai_status_is_qwen_only(client):
 ])
 def test_rule_plan(task, expected):
     assert rule_plan(task, COCO80)[1] == expected
+
+
+@pytest.fixture
+def watch_client(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from tests.conftest import TOKEN, make_settings
+
+    s = make_settings(tmp_path, agent_watch=True, agent_watch_interval_s=5)
+    with TestClient(create_app(s)) as c:
+        c.headers["Authorization"] = f"Bearer {TOKEN}"
+        yield c
+
+
+def test_watch_mode_comments_on_yolo_detections(watch_client):
+    with watch_client.websocket_connect("/ws/telemetry") as ws:
+        ws.receive_text()
+        msg = None
+        t0 = time.time()
+        while time.time() - t0 < 15:
+            m = json.loads(ws.receive_text())
+            if m["type"] == "chat":
+                msg = m["message"]
+                break
+    assert msg is not None, "no watch comment arrived"
+    assert msg["auto"] is True and msg["provider"] == "rules" and "person" in msg["text"]
+    assert "SUGGEST" in msg["text"]
+    hist = watch_client.get("/api/agent/history").json()
+    assert hist[-1]["meta"].get("auto") is True
+    assert watch_client.post("/api/agent/watch", json={"enabled": False}).json()["watch"] is False
+
+
+def test_watch_mode_uses_qwen_with_image_when_available(client):
+    fake = FakeLlama(report="[SEEN] someone walking. SUGGEST: yaw right.", vision=True)
+    use_fake(client, fake)
+    c = client.app.state.container
+    # Let the backend's own health/props poll confirm the (simulated) vision model.
+    wait_for(lambda: c.qwen.vision_capable and c.qwen.state == "ready", timeout=15)
+    c.settings.agent_watch_interval_s = 5
+    assert client.post("/api/agent/watch", json={"enabled": True}).json()["watch"] is True
+    wait_for(lambda: c.agent.last_watch is not None, timeout=15)
+    assert c.agent.last_watch["provider"] == "qwen" and c.agent.last_watch["vision"] is True
+    req = [r for r in fake.requests if r.get("stream")][-1]
+    assert req["max_tokens"] == 90 and isinstance(req["messages"][-1]["content"], list)
 
 
 def _obs(dets, armed=True, roll=0.0):
