@@ -113,7 +113,7 @@ def test_env_example_parses(tmp_path):
     assert s.host == "0.0.0.0" and s.port == 8000 and s.mock is False
     # Empty values parse as empty secrets; services treat them as "not configured".
     assert not (s.auth_token and s.auth_token.get_secret_value().strip())
-    assert s.detector_backend == "auto" and s.detector_prompts == "person" and s.servo_up_is_positive is True
+    assert s.detector_backend == "auto" and "pen" in s.detector_prompts and s.servo_up_is_positive is True
     assert s.servo_backend == "auto" and s.qwen_threads == 3
     assert s.qwen_model_path == "" and s.qwen_manage_server == "auto"  # auto-detected from models/
 

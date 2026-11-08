@@ -116,8 +116,24 @@ class QwenService:
             if model is None:
                 model = next((str(f) for f in ggufs if "mmproj" not in f.name.lower()), None)
             if mmproj is None and model and "vl" in Path(model).name.lower():
-                mmproj = next((str(f) for f in ggufs if "mmproj" in f.name.lower()), None)
+                mmproj = self._matching_mmproj(Path(model), [f for f in ggufs if "mmproj" in f.name.lower()])
         return {"bin": bin_, "model": model, "mmproj": mmproj}
+
+    @staticmethod
+    def _matching_mmproj(model: Path, cands: list[Path]) -> str | None:
+        """The vision projector that belongs to ``model`` (e.g. Qwen2-VL-2B, not Qwen2.5-VL-3B)."""
+        import re
+
+        key = [t for t in re.findall(r"[a-z0-9.]+", model.stem.lower()) if not t.startswith(("q4", "q5", "q6", "q8", "f16", "bf16", "k", "m", "s", "0"))][:3]
+        for f in cands:
+            name = f.name.lower()
+            if all(t in name for t in key):
+                return str(f)
+        return str(cands[0]) if len(cands) == 1 else None
+
+    @property
+    def busy(self) -> bool:
+        return self._sem.locked()
 
     @property
     def installed(self) -> bool:

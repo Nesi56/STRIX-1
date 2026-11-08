@@ -309,7 +309,7 @@ def test_watch_mode_comments_on_yolo_detections(watch_client):
     assert watch_client.post("/api/agent/watch", json={"enabled": False}).json()["watch"] is False
 
 
-def test_watch_mode_uses_qwen_with_image_when_available(client):
+def test_watch_comments_use_qwen_text_only_to_stay_cool(client):
     fake = FakeLlama(report="[SEEN] someone walking. SUGGEST: yaw right.", vision=True)
     use_fake(client, fake)
     c = client.app.state.container
@@ -318,9 +318,9 @@ def test_watch_mode_uses_qwen_with_image_when_available(client):
     c.settings.agent_watch_interval_s = 5
     assert client.post("/api/agent/watch", json={"enabled": True}).json()["watch"] is True
     wait_for(lambda: c.agent.last_watch is not None, timeout=15)
-    assert c.agent.last_watch["provider"] == "qwen" and c.agent.last_watch["vision"] is True
+    assert c.agent.last_watch["provider"] == "qwen" and c.agent.last_watch["vision"] is False
     req = [r for r in fake.requests if r.get("stream")][-1]
-    assert req["max_tokens"] == 90 and isinstance(req["messages"][-1]["content"], list)
+    assert req["max_tokens"] == 60 and isinstance(req["messages"][-1]["content"], str)  # no camera image
 
 
 def _obs(dets, armed=True, roll=0.0):

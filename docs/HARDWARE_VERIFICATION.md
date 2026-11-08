@@ -32,6 +32,9 @@ you validate.
 | System monitor (psutil, thermal zone) | ✅ (x86) | Pi thermal zone name | |
 | `vcgencmd get_throttled` / `pmic_read_adc` parsing | ✅ unit tests with documented output format | output format on your firmware | |
 | YOLOX-S ONNX detector | ✅ real model on a real photo (person 0.93; onnxruntime + OpenCV DNN) | FPS on the Pi 5 CPU | |
+| YOLOX-Tiny ONNX detector (default) | ✅ real model on real photos (bus 0.94, person 0.88; 416 px, ~40 ms on x86 with 2 threads) | FPS and CPU temperature on the Pi 5 | |
+| Everyday 600-object model (pens) | decoding + label mapping unit-tested; export not run here | `get_detector_model.sh --everyday` on the Pi; pen/phone/mug detection | |
+| Heat guard (YOLO slows when hot / Qwen busy) | ✅ unit-tested logic | CPU temperature over a 10-minute session with the Active Cooler | |
 | YOLO11n/YOLOv8 ONNX path | decoder unit-tested on synthetic tensors only | export with `--yolo11n`, accuracy + FPS | |
 | Distance / bearing estimates | ✅ geometry tests; synthetic scene | compare with a tape measure at 2/4/8 m | |
 | Qwen agent: plan → servo skills → report | ✅ simulated llama-server (JSON schema), keyword planner, tracking in the synthetic scene | plan quality and latency with the real model | |

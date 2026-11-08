@@ -23,11 +23,24 @@ from app.services.imu_service import IMUService
 from app.services.mapping_service import MappingService
 from app.services.memory_service import MemoryService
 from app.services.recording_service import RecordingService
-from app.services.servo_service import ServoService, prepare_lgpio_workdir
+from app.services.servo_service import ServoService
 from app.services.system_monitor import SystemMonitor
 from app.services.telemetry_service import TelemetryService
 
 log = logging.getLogger(__name__)
+
+
+def prepare_lgpio_workdir(settings: Settings) -> None:
+    """On the Pi 5, lgpio (used by gpiozero and Blinka) writes small notification files into the current
+    directory. Under the systemd unit the code directory is read-only, so point it at data/ (``LG_WD``)."""
+    import os
+
+    wd = settings.data_dir / "lgpio"
+    try:
+        wd.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("LG_WD", str(wd))
+    except OSError:
+        pass
 
 
 class Container:
@@ -48,7 +61,7 @@ class Container:
         self.mapping = MappingService(settings, self.camera, self.events)
         self.detector = DetectorService(settings, self.camera, self.events, self.db,
                                         session_id=lambda: (self.recording.active_session or {}).get("id"),
-                                        pose=self.camera_pose_now)
+                                        pose=self.camera_pose_now, load=self.load_now)
         self.qwen = QwenService(settings, self.events, register_process=self.system.register_process)
         self.memory = MemoryService(self)
         self.agent = AgentService(self)
@@ -64,6 +77,10 @@ class Container:
             return truth[0], truth[1], self.servo.current, truth[2]
         o = (self.imu.latest() or {}).get("orientation") or {}
         return o.get("roll", 0.0), o.get("pitch", 0.0), self.servo.current, o.get("yaw_relative", 0.0)
+
+    def load_now(self) -> tuple[float | None, bool]:
+        """(CPU temperature °C, Qwen generating) — used to slow background work when the Pi heats up."""
+        return (self.system.latest() or {}).get("cpu_temp_c"), self.qwen.busy
 
     def camera_pose_now(self) -> dict[str, float]:
         """Camera pose when a frame is grabbed: IMU yaw (relative)/pitch/roll and servo tilt (+ up), degrees."""

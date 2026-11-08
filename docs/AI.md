@@ -68,7 +68,7 @@ The servo only tilts. Horizontal alignment is given as a suggestion ("yaw right 
   never move it.
 - **EMERGENCY STOP** (button or Space) turns servo control off and cancels the agent immediately,
   including an in-flight Qwen request. It **latches**: tasks and buttons can't move the camera until the
-  operator presses **Servo on** (or E). **Esc** stops just the agent.
+  operator presses **Enable control** in the Camera Servo panel (or E). **Esc** stops just the agent.
 - Model output is never executed; shell/code blocks are stripped from answers.
 - Everything runs on the Pi; no data leaves the local network.
 
@@ -145,14 +145,15 @@ task. Without Qwen, a rule-based sentence is used. Turn it off with `STRIX_AGENT
 ## Running Qwen on the Pi 5 — one command, then it starts by itself
 
 ```bash
-cd ~/STRIX-1 && scripts/setup_ai.sh          # Qwen2.5-VL-3B-Instruct (best quality)
-cd ~/STRIX-1 && scripts/setup_ai.sh --fast   # Qwen2-VL-2B-Instruct (faster)
+cd ~/STRIX-1 && scripts/setup_ai.sh            # Qwen2-VL-2B-Instruct (default: fast, keeps the Pi cooler)
+cd ~/STRIX-1 && scripts/setup_ai.sh --best     # Qwen2.5-VL-3B-Instruct (better answers, slower and hotter)
+cd ~/STRIX-1 && scripts/setup_ai.sh --everyday # also install the 600-object detector (pens, mugs …) without asking
 ```
 
 The script:
 1. installs the YOLO detector
 2. builds llama.cpp
-3. asks Hugging Face which GGUF files `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF` contains, then downloads the Q4_K_M model and its vision projector (mmproj)
+3. asks Hugging Face which GGUF files `ggml-org/Qwen2-VL-2B-Instruct-GGUF` (or the 3B with `--best`) contains, then downloads the Q4_K_M model and its vision projector (mmproj), and writes their paths to `.env`
 4. installs the `strix1-llama` service (localhost only)
 5. writes the `QWEN_*` settings into `.env`
 6. restarts STRIX-1 and waits until Qwen answers
@@ -163,6 +164,15 @@ STRIX-1 backend starts llama-server itself when no Qwen server answers within ~2
 `~/llama.cpp/build/bin/llama-server` and the `.gguf` files in `models/`.
 
 It is safe to re-run. Run it inside `tmux`; it downloads about 3–4 GB and the build takes 10–20 minutes.
+
+**Keeping it cool.** The defaults are chosen for heat:
+- 720p camera stream;
+- YOLOX-Tiny at 3 detections/s, slowed to 2/s while Qwen is thinking and to 1–1.5/s above 75 °C;
+- the 2B Qwen model;
+- 336 px images for vision answers;
+- automatic comments that are text-only, at most every 45 s, and skipped above 70 °C.
+
+The STATUS corner shows the CPU temperature. On a drone or in a case, fit the official Raspberry Pi **Active Cooler**: the Pi 5 throttles at 85 °C.
 
 **Speed (estimate, measure on your Pi):** a text answer takes seconds to tens of seconds. An answer
 with a camera image adds image encoding on the CPU, so expect roughly 20–60 s with the 3B model and less
@@ -183,7 +193,9 @@ plan and report, but can't identify things in the image.
 
 | Engine | When | Notes |
 |---|---|---|
-| ONNX **YOLOX-S** | default from `scripts/get_detector_model.sh` | OpenCV Zoo, Apache-2.0, COCO-80; verified in development (person 0.93 on a test photo). Expect a few FPS on the Pi 5. |
+| ONNX **YOLOX-Tiny** (416 px) | default from `scripts/get_detector_model.sh` | Megvii YOLOX release, Apache-2.0, SHA-256 checked, COCO-80 (phones, cups, bottles, laptops, books, scissors …). About 4× less compute than YOLOX-S; verified in development (bus 0.94, person 0.88). |
+| ONNX **YOLOv8n Open Images V7** (416 px) | `scripts/get_detector_model.sh --everyday` (or answer *yes* in `setup_ai.sh`) | 600 everyday objects incl. **pen**, mobile phone, mug, coffee cup. Exported on the Pi with Ultralytics (AGPL-3.0, temporary CPU PyTorch). Names are mapped to STRIX-1's (mobile phone → cell phone, mug → cup …). Small/thin objects like pens are hard for a nano model, so expect misses. Not run in development (export blocked here), only its decoding and label mapping are unit-tested. |
+| ONNX **YOLOX-S** | `--yolox-s` | more accurate, ~4× more CPU, runs the Pi hotter |
 | ONNX **YOLO11n / YOLOv8** | `scripts/get_detector_model.sh --yolo11n` | ~4× lighter, so faster; exported with Ultralytics (AGPL-3.0). Its decoder is unit-tested against the documented output format, but no exported model was run in development. |
 | OpenCV **HOG** | no model installed | person only, fallback |
 | **Synthetic** | demo mode | ground-truth boxes from the synthetic camera, labeled SYNTHETIC |

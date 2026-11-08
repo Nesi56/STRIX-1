@@ -56,7 +56,7 @@ export function StatusCorner() {
       <Row label="CAMERA" tone={devTone(cam?.status.state)} value={cam?.available ? `${(cam.measured_fps ?? 0).toFixed(0)} fps` : "offline"}
         hint={cam && !cam.available ? cam.status.error : null} />
       <Row label="YOLO" tone={detTone} value={det ? (det.engine === "hog" ? "basic (people only)" : `${det.fps.toFixed(1)} fps`) : "—"}
-        hint={det?.engine === "hog" ? "run scripts/setup_ai.sh" : det?.status.error} />
+        hint={det?.engine === "hog" ? "run scripts/setup_ai.sh" : det?.slowed ? `slowed to cool down (${det.slowed})` : det?.status.error} />
       <Row label="QWEN" tone={qTone} value={qValue} hint={qHint} title={q?.detail ?? undefined} />
       <Row label="MPU6050" tone={devTone(imu?.status.state)}
         value={imu?.latest ? `roll ${signed(imu.latest.orientation.roll, 0)}° pitch ${signed(imu.latest.orientation.pitch, 0)}°` : imu?.status.state ?? "—"}
@@ -68,6 +68,10 @@ export function StatusCorner() {
         title={sv?.available ? "SG90 camera tilt servo. It has no sensor, so the Pi can't detect it — tap Servo on under the video and watch it move." : undefined} />
       <Row label="MEMORY" tone={mem ? (mem.counts.hidden ? "warn" : "ok") : "dim"}
         value={mem ? `${mem.counts.seen} seen · ${mem.counts.remembered + mem.counts.hidden} remembered` : "—"} />
+      <Row label="CPU" tone={sys?.cpu_temp_c == null ? "dim" : sys.cpu_temp_c >= 80 ? "crit" : sys.cpu_temp_c >= 70 ? "warn" : "ok"}
+        value={sys?.cpu_temp_c == null ? "—" : `${sys.cpu_temp_c.toFixed(0)} °C`}
+        hint={sys?.cpu_temp_c != null && sys.cpu_temp_c >= 75 ? "hot: YOLO and Qwen's comments are slowed" : null}
+        title="The Pi 5 throttles at 85 °C. An Active Cooler is strongly recommended when running AI." />
       <Row label="POWER" tone={battTone} value={pw?.undervoltage_now ? "LOW VOLTAGE" : pw?.undervoltage_occurred ? "dipped low earlier" : "OK"}
         title={pw?.battery?.reason ?? "The USB power bank doesn't report its charge to the Pi, so battery % can't be shown."} />
     </section>

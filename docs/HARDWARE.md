@@ -81,7 +81,7 @@ Code uses **BCM GPIO numbers**; the tables also list **physical header pins**.
 
 These are the defaults in the code (`STRIX_SERVO_GPIO=18`), so nothing needs configuring. The SG90 has no
 feedback wire, so the Pi **can't detect** whether it's plugged in: the dashboard's SERVO row shows whether the
-GPIO18 signal can be driven. Press **Servo on** (under the video) and the ▲/▼ buttons to see it move.
+GPIO18 signal can be driven. In the **Camera Servo** panel press **Enable control**, then **+5°/−5°** or drag the slider to see it move.
 If the row is red, it shows the fix (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#servo)). The most common
 one on the Pi 5 is the systemd service: lgpio needs a writable working directory, so the unit sets
 `LG_WD=<repo>/data/lgpio`. Re-run `scripts/install_pi.sh --skip-apt --skip-frontend --systemd` if you

@@ -26,6 +26,7 @@ from app.services.detector import (
     OnnxDetector,
     estimate_geometry,
     find_default_model,
+    labels_for_model,
     normalize_label,
     parse_size_priors,
 )
@@ -40,7 +41,7 @@ class DetectorError(ValueError):
 
 class DetectorService:
     def __init__(self, settings: Settings, camera: CameraService, events: EventLog, db=None,
-                 session_id=lambda: None, pose=None) -> None:
+                 session_id=lambda: None, pose=None, load=None) -> None:
         self.settings = settings
         self._pose = pose  # () -> {"yaw", "pitch", "roll", "tilt"} sampled when a frame is grabbed
         self.camera = camera
@@ -61,13 +62,16 @@ class DetectorService:
         self._last_logged: tuple[str, ...] = ()
         self._last_log_t = 0.0
         self.prompts: list[str] = []
-        self.set_prompts([p for p in settings.detector_prompts.split(",") if p.strip()], quiet=True)
+        self._requested = [p for p in settings.detector_prompts.split(",") if p.strip()]
+        self.set_prompts(self._requested, quiet=True)
+        self._load = load  # () -> (cpu_temp_c | None, qwen_busy): slow down when the Pi is hot or Qwen is thinking
+        self.slowed: str | None = None
 
     # ------------------------------------------------------------ setup
-    def _labels(self) -> list[str] | None:
+    def _labels(self, model: str = "") -> list[str] | None:
         if self.settings.detector_labels and Path(self.settings.detector_labels).is_file():
             return [l.strip() for l in Path(self.settings.detector_labels).read_text().splitlines() if l.strip()]
-        return None
+        return labels_for_model(Path(model)) if model else None
 
     def _choose_engine(self) -> None:
         mode = self.settings.detector_backend
@@ -86,12 +90,12 @@ class DetectorService:
             try:
                 if not model:
                     raise FileNotFoundError("no ONNX model in models/ (run scripts/get_detector_model.sh)")
-                self._engine = OnnxDetector(model, self.settings.detector_format, self._labels(),
+                self._engine = OnnxDetector(model, self.settings.detector_format, self._labels(model),
                                             self.settings.detector_conf, self.settings.detector_iou,
                                             self.settings.detector_imgsz)
                 self.engine_kind, self.status.backend = "onnx", f"onnx:{self._engine.format}"
                 self.description = self._engine.description
-                self.vocabulary = list(self._engine.labels)
+                self.vocabulary = list(dict.fromkeys(self._engine.labels))
                 return
             except Exception as exc:
                 errors.append(str(exc))
@@ -112,7 +116,9 @@ class DetectorService:
         self._choose_engine()
         if self.status.state in (DeviceState.DISABLED, DeviceState.ERROR):
             return
-        # Drop prompts the engine cannot detect (e.g. HOG only knows "person").
+        # Re-apply the configured prompts against this engine's classes (e.g. "pen" needs the everyday model);
+        # drop the ones it cannot detect (HOG only knows "person").
+        self.set_prompts(self._requested, quiet=True)
         self.prompts = [p for p in self.prompts if p in self.vocabulary] or [self.vocabulary[0]]
         self._thread = StoppableThread(self._run, "detector")
         self._thread.start()
@@ -134,7 +140,7 @@ class DetectorService:
         if unknown and not quiet:
             raise DetectorError(
                 f"not in the detector's vocabulary: {', '.join(unknown)} "
-                f"({'person only (HOG fallback)' if self.engine_kind == 'hog' else 'COCO-80 classes'})"
+                f"({'person only (basic detector)' if self.engine_kind == 'hog' else 'not one of the objects this YOLO model knows'})"
             )
         if len(cleaned) > 12:
             raise DetectorError("at most 12 prompts")
@@ -173,10 +179,27 @@ class DetectorService:
         h, w = bgr.shape[:2]
         return w, h, self._engine.detect(bgr), seq
 
+    def period(self) -> float:
+        """Seconds between detections. Slower when the CPU is hot or Qwen is generating, to keep the Pi cool."""
+        hz, reason = self.settings.detector_hz, None
+        if self._load is not None:
+            try:
+                temp, busy = self._load()
+            except Exception:
+                temp, busy = None, False
+            if temp is not None and temp >= 80:
+                hz, reason = min(hz, 1.0), f"CPU {temp:.0f} °C"
+            elif temp is not None and temp >= 75:
+                hz, reason = min(hz, 1.5), f"CPU {temp:.0f} °C"
+            elif busy:
+                hz, reason = min(hz, 2.0), "Qwen is thinking"
+        self.slowed = reason if hz < self.settings.detector_hz else None
+        return 1.0 / hz
+
     def _run(self, stop: threading.Event) -> None:
-        period = 1.0 / self.settings.detector_hz
         times: list[float] = []
         while not stop.is_set():
+            period = self.period()
             t0 = time.monotonic()
             if not self.camera.available:
                 self.status.set(DeviceState.DISCONNECTED, "camera unavailable")
@@ -258,5 +281,7 @@ class DetectorService:
             "fps": round(self._fps, 2),
             "infer_ms": round(self._infer_ms, 1) if self._infer_ms is not None else None,
             "hfov_deg": self.settings.camera_hfov_deg,
+            "slowed": self.slowed,
+            "classes": len(self.vocabulary),
             "distance_method": "pinhole size prior (typical object height); ±30 % or worse",
         }

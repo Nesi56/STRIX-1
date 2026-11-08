@@ -103,8 +103,8 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------------------ camera
     camera_backend: Literal["auto", "picamera2", "mock", "disabled"] = "auto"
-    camera_width: int = Field(1920, ge=320, le=4608)
-    camera_height: int = Field(1080, ge=240, le=2592)
+    camera_width: int = Field(1280, ge=320, le=4608)
+    camera_height: int = Field(720, ge=240, le=2592)
     camera_fps: float = Field(30.0, ge=1.0, le=120.0)
     camera_jpeg_quality: int = Field(80, ge=30, le=95)
     camera_hflip: bool = False
@@ -130,8 +130,8 @@ class Settings(BaseSettings):
     detector_conf: float = Field(0.35, ge=0.05, le=0.99)
     detector_iou: float = Field(0.45, ge=0.1, le=0.9)
     detector_imgsz: int = Field(0, ge=0, le=1280)  # 0 = from the model (OpenCV DNN: 640)
-    detector_hz: float = Field(4.0, ge=0.5, le=30.0)  # upper bound; inference time limits it
-    detector_prompts: str = "person"  # comma separated classes shown on the video
+    detector_hz: float = Field(3.0, ge=0.5, le=30.0)  # upper bound; inference time limits it
+    detector_prompts: str = "person,cell phone,pen,cup,bottle"  # comma separated classes shown on the video
     camera_hfov_deg: float = Field(102.0, ge=30.0, le=180.0)  # Camera Module 3 Wide
 
     # ------------------------------------------------------------- agent
@@ -139,8 +139,9 @@ class Settings(BaseSettings):
     agent_skill_timeout_s: float = Field(12.0, ge=2.0, le=60.0)
     agent_standoff_m: float = Field(1.5, ge=0.3, le=20.0)  # distance used for approach suggestions
     agent_watch: bool = True  # Qwen comments automatically when YOLO sees new objects
-    agent_watch_interval_s: float = Field(20.0, ge=5.0, le=600.0)  # minimum gap between watch comments
-    agent_image_px: int = Field(448, ge=224, le=1280)  # width of camera frames sent to a Qwen vision model
+    agent_watch_interval_s: float = Field(45.0, ge=5.0, le=600.0)  # minimum gap between watch comments
+    agent_image_px: int = Field(336, ge=224, le=1280)  # width of camera frames sent to a Qwen vision model
+    agent_watch_image: bool = False  # automatic comments also send the camera image (slow/hot on the Pi)
     vo_enabled: bool = False
 
     # --- object memory (seen / remembered / hidden) ---

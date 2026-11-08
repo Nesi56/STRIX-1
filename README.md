@@ -41,12 +41,13 @@ any browser on the same Wi-Fi; no VNC or monitor needed.
 | **Live 3D memory world** | The drone (driven by the MPU6050) with its camera view cone and every remembered object. Hidden objects glow *inside* see-through cups. Dashed boxes on the video show remembered objects behind or under things. |
 | **Send to a remembered target** | "Where is the ball?" / AIM → the camera tilts back to the remembered object and Qwen tells the pilot which way to turn. The aircraft is never moved. |
 | **Speaks up by itself** | Qwen comments when YOLO sees something new or an object goes under / comes out from a cup. |
-| **YOLO stream** | ONNX detector (YOLOX-S by default, YOLO11n/YOLOv8 supported) running continuously. Green boxes on the video show `person 0.88 · ~5.4 m`. Prompts choose the classes (COCO-80). |
+| **YOLO stream** | YOLOX-Tiny by default: fast and light, 80 everyday objects incl. phones, cups and bottles. The optional **everyday model** (`--everyday`, YOLOv8n Open Images, 600 objects) adds pens, mugs and more. Green boxes show `cup 0.90 · ~0.7 m`. The row above the Qwen chat chooses what to look for. |
 | **Distance & direction** | Pinhole model with typical object heights (HFOV 102°), labeled as estimates (±30 %). Bearing comes from image position; the radar shows a top-down view. |
 | **Suggestions** | Computed from geometry and sensors, e.g. "Yaw right ~15°", "Advance ~3.9 m to a 1.5 m standoff", "Level the airframe first". |
 | **Sensors** | MPU6050 at 100 Hz with a complementary filter (roll/pitch, *relative* yaw: no magnetometer), calibration and health checks. DHT11 through the Pi 5 kernel driver. |
-| **Camera servo** | Buttons on the video (on/off, up, down, level) and keys W/S/C, E on/off, Space emergency stop, Esc stops Qwen's task. SG90 signal on GPIO18 (pin 12), powered from the 52Pi board's 5 V. |
-| **One-screen console** | Status (camera, YOLO, Qwen, MPU6050, DHT11, servo, memory, power) · memory list · live video with the camera-servo buttons · live 3D (world or drone close-up) · Qwen chat with the YOLO targets above it · recordings tab. **Start recording** saves the camera video and all sensor data together. |
+| **Camera servo** | The original servo panel: **Enable control**, Center, −5°/+5° and an angle slider (keys: E enable, W/S tilt, C center, Space emergency stop). A task for Qwen turns control on by itself. SG90 signal on GPIO18 (pin 12), powered from the 52Pi board's 5 V. |
+| **One-screen console** | Left: status (incl. CPU temperature), camera servo, memory list · center: live video · right: live 3D (world or drone close-up) above the Qwen chat with the YOLO targets, plus a recordings tab. **Start recording** saves the camera video and all sensor data together. |
+| **Runs cool** | 720p camera stream, light detector, small Qwen model by default. YOLO slows down while Qwen thinks or the CPU passes 75 °C, and automatic comments skip the camera image. |
 | **Demo mode** | `STRIX_MOCK=true` gives a synthetic camera (a **shell game** with three cups and a ball, or an outdoor scene), IMU and DHT with ground-truth detections, all labeled **SYNTHETIC**. A missing real device shows *disconnected*, never fake data. |
 
 ## Quick start (no hardware, any laptop)
@@ -126,7 +127,7 @@ Built and tested without the physical drone (x86-64 Linux, demo mode, headless b
 - the full console
 - the agent (keyword planner, plus Qwen protocol against a simulated llama-server)
 - tracking in the synthetic scene
-- **the YOLOX-S model on a real photo** (person 0.93)
+- **the YOLOX-S and YOLOX-Tiny models on real photos** (person 0.93 / bus 0.94, person 0.88)
 - auth and recording
 
 **Needs validation on the Pi** ([docs/HARDWARE_VERIFICATION.md](docs/HARDWARE_VERIFICATION.md)):
@@ -147,6 +148,6 @@ Built and tested without the physical drone (x86-64 Linux, demo mode, headless b
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Optional models have their own licenses: YOLOX-S (Apache-2.0),
+MIT — see [LICENSE](LICENSE). Optional models have their own licenses: YOLOX-Tiny/YOLOX-S (Apache-2.0), YOLOv8n Open Images (AGPL-3.0),
 Ultralytics YOLO11 (AGPL-3.0), Qwen2.5-1.5B (Apache-2.0), Qwen2.5-3B (Qwen Research License — check its terms
 for your use). Always confirm on the model card.

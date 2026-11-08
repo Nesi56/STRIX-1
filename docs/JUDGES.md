@@ -13,9 +13,10 @@ how far away things are and tells the pilot how to move. Everything runs on the 
 |---|---|---|
 | **Status** (top left) | Camera, YOLO, Qwen, MPU6050, DHT11, camera servo (GPIO18 / pin 12), memory and power. A red row says how to fix it. | — |
 | **Memory** (left) | Every object STRIX-1 remembers: **seen** now, **remembered** (out of sight, with a timer) or **hidden** under a cup, with an **AIM** button to point the camera at it. | Press AIM on the hidden ball. |
-| **Live video** (center) | Green boxes: `cup 0.90 · ~0.7 m` = what YOLO sees and about how far. **Dashed orange box** = something remembered behind or under another object (`sports ball #4 · HIDDEN under cup #2 · 12 s`). The camera servo controls sit on the video: on/off, up, down, level. | Watch the ball go under a cup. |
-| **Live 3D** (below the video) | **World**: the drone (moving with the MPU6050), a green cone showing where the camera looks, and every remembered object. Hidden objects glow *inside* see-through cups. **Drone**: close-up model with roll/pitch/yaw and the DHT11. | Drag to orbit. |
-| **Qwen** (right) | Talk to Qwen. The row above the chat sets what **YOLO looks for**. Qwen also speaks up by itself when something new appears or the ball goes under a cup. **IDENTIFY** asks it to describe the camera image. **Recordings** is the second tab. | See the demo below. |
+| **Camera servo** (left) | Enable control, Center, −5°/+5° and an angle slider for the SG90 camera tilt servo. | Press Enable control, then +5°. |
+| **Live video** (center) | Green boxes: `cup 0.90 · ~0.7 m` = what YOLO sees and about how far. **Dashed orange box** = something remembered behind or under another object (`sports ball #4 · HIDDEN under cup #2 · 12 s`). | Watch the ball go under a cup. |
+| **Live 3D** (top right) | **World**: the drone (moving with the MPU6050), a green cone showing where the camera looks, and every remembered object. Hidden objects glow *inside* see-through cups. **Drone**: close-up model with roll/pitch/yaw and the DHT11. | Drag to orbit. |
+| **Qwen** (bottom right) | Talk to Qwen. The row above the chat sets what **YOLO looks for**. Qwen also speaks up by itself when something new appears or the ball goes under a cup. **IDENTIFY** asks it to describe the camera image. **Recordings** is the second tab. | See the demo below. |
 | **Top bar** | **Start recording** (video + sensors) · **EMERGENCY STOP** (also Space) · **Reset session** | |
 
 ## 3-minute demo script
@@ -41,7 +42,7 @@ clearly marked **SYNTHETIC DEMO DATA**, starts with the cups scene).
 2. Press **IDENTIFY**: Qwen looks at the camera image and describes it (needs the vision model).
 3. Ask **"How warm is it?"**: the DHT11 reading.
 4. Press **Space (EMERGENCY STOP)** during a task. The task stops, the servo turns off and stays off
-   until you press **Servo on** again.
+   until you press **Enable control** again.
 
 ## Why it is technically interesting
 

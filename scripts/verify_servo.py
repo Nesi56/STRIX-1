@@ -28,14 +28,10 @@ def main() -> int:
         print("aborted")
         return 1
     from app.config.settings import Settings
-    from app.services.servo_service import GpiozeroServoBackend, SysfsPWMServoBackend, angle_to_pulse_us, explain_gpio_error
+    from app.services.servo_service import GpiozeroServoBackend, SysfsPWMServoBackend, angle_to_pulse_us
 
     s = Settings(_env_file=None, servo_backend=a.backend, servo_pwm_chip=a.chip, servo_pwm_channel=a.channel)
-    try:
-        dev = SysfsPWMServoBackend(s) if a.backend == "hardware_pwm" else GpiozeroServoBackend(s)
-    except Exception as exc:
-        print(f"FAIL: cannot drive GPIO{s.servo_gpio} (pin 12): {explain_gpio_error(exc, s.servo_gpio)}")
-        return 1
+    dev = SysfsPWMServoBackend(s) if a.backend == "hardware_pwm" else GpiozeroServoBackend(s)
     try:
         for angle in (90, a.min, 90, a.max, 90):
             pulse = angle_to_pulse_us(angle, s.servo_min_pulse_us, s.servo_max_pulse_us)

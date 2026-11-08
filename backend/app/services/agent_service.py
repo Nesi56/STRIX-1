@@ -579,15 +579,18 @@ class AgentService:
                 text += " I'll keep track of it — ask me \"where is it?\" any time."
         else:
             text = deterministic_watch(dets, sugg, bool(obs["synthetic"]))
-        if self.c.qwen.state == "ready":
-            event = ("EVENT: object MEMORY: " + mem_event["text"]) if mem_event else \
-                "EVENT: YOLO just detected: " + "; ".join(describe_detection(d) for d in dets[:5])
+        # Automatic comments must stay cheap so the Pi stays cool: memory events use the instant sentence above;
+        # new-object comments use Qwen text-only (no camera image) and only while the CPU is below 70 °C.
+        temp, _ = self.c.load_now() if hasattr(self.c, "load_now") else (None, False)
+        if self.c.qwen.state == "ready" and not mem_event and (temp is None or temp < 70):
+            event = "EVENT: YOLO just detected: " + "; ".join(describe_detection(d) for d in dets[:5])
             content, vision = await self._user_content(
-                f"{observation_text(obs)}\n\nPILOT SUGGESTIONS:\n" + ("\n".join(f"- {x}" for x in sugg) or "- none") + f"\n\n{event}", True)
+                f"{observation_text(obs)}\n\nPILOT SUGGESTIONS:\n" + ("\n".join(f"- {x}" for x in sugg) or "- none") + f"\n\n{event}",
+                bool(getattr(self.s, "agent_watch_image", False)))
             san = StreamingSanitizer()
             out = ""
             gen = self.c.qwen.stream_chat([{"role": "system", "content": WATCH_PROMPT}, {"role": "user", "content": content}],
-                                          max_tokens=90)
+                                          max_tokens=60)
             try:
                 async for ev in gen:
                     if "delta" in ev:

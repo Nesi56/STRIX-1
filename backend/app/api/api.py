@@ -377,16 +377,9 @@ async def servo_angle(body: ServoAngleRequest, request: Request) -> dict[str, An
     return _servo_call(get_container(request).servo.set_target, body.angle)
 
 
-def _operator_move(c: Container, fn, *args):
-    """Tilt buttons / keys are operator actions: they enable servo control (unless an e-stop is latched)."""
-    _servo_call(c.servo.ensure_armed)
-    return _servo_call(fn, *args)
-
-
 @router.post("/servo/center")
 async def servo_center(request: Request) -> dict[str, Any]:
-    c = get_container(request)
-    return _operator_move(c, c.servo.center)
+    return _servo_call(get_container(request).servo.center)
 
 
 @router.post("/servo/arm")
@@ -401,8 +394,7 @@ async def servo_disarm(request: Request) -> dict[str, Any]:
 
 @router.post("/servo/nudge")
 async def servo_nudge(body: ServoNudgeRequest, request: Request) -> dict[str, Any]:
-    c = get_container(request)
-    return _operator_move(c, c.servo.nudge, body.up_deg)
+    return _servo_call(get_container(request).servo.nudge, body.up_deg)
 
 
 @router.post("/servo/speed")

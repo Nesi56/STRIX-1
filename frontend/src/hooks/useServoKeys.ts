@@ -23,7 +23,7 @@ export async function servoAction(id: string, toast: ReturnType<typeof useToast>
       toast(armed ? "Camera servo off" : "Camera servo on", armed ? "warn" : "ok");
       return !armed;
     }
-    // Tilt buttons turn the servo on by themselves (unless an emergency stop is active).
+    // Like the original servo panel: tilting needs "Enable control" (E) first; the backend says so if not.
     if (id === "center") await post("/api/servo/center");
     if (id === "up") await post("/api/servo/nudge", { up_deg: TILT_STEP });
     if (id === "down") await post("/api/servo/nudge", { up_deg: -TILT_STEP });

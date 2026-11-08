@@ -134,7 +134,7 @@ export interface DetectionResult {
 
 export interface DetectorState {
   status: DeviceStatus; engine: string; description: string; prompts: string[]; vocabulary_size: number;
-  fps: number; infer_ms: number | null; hfov_deg: number; distance_method: string;
+  fps: number; infer_ms: number | null; hfov_deg: number; distance_method: string; slowed?: string | null; classes?: number;
 }
 
 export interface PlanStep {

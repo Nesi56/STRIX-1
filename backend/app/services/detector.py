@@ -59,7 +59,26 @@ SIZE_PRIORS_M: dict[str, float] = {
     "cup": 0.10, "chair": 0.90, "couch": 0.85, "potted plant": 0.60, "bed": 0.60, "dining table": 0.75,
     "toilet": 0.75, "tv": 0.55, "laptop": 0.25, "cell phone": 0.15, "refrigerator": 1.75, "book": 0.24,
     "clock": 0.30, "vase": 0.30, "teddy bear": 0.35, "bench": 0.85, "fire hydrant": 0.75,
+    # extra everyday objects known by the Open Images model (--everyday)
+    "pen": 0.14, "pencil": 0.18, "mouse": 0.04, "keyboard": 0.04, "remote": 0.18, "scissors": 0.18,
 }
+
+# Names used by other detectors (e.g. the 600-class Open Images V7 YOLO) → the names STRIX-1 uses everywhere
+# (COCO style), so prompts, distances, the memory and Qwen don't care which model is installed.
+LABEL_ALIASES = {
+    "mobile phone": "cell phone", "telephone": "cell phone", "coffee cup": "cup", "mug": "cup",
+    "ball": "sports ball", "football": "sports ball", "tennis ball": "sports ball", "golf ball": "sports ball",
+    "rugby ball": "sports ball", "cricket ball": "sports ball", "volleyball (ball)": "sports ball",
+    "man": "person", "woman": "person", "boy": "person", "girl": "person",
+    "computer mouse": "mouse", "computer keyboard": "keyboard", "television": "tv", "remote control": "remote",
+    "table": "dining table", "kitchen & dining room table": "dining table", "sofa bed": "couch",
+    "motorcycle": "motorcycle", "houseplant": "potted plant", "wine glass": "wine glass",
+}
+
+
+def canonical_label(name: str) -> str:
+    t = " ".join(name.lower().replace("_", " ").split())
+    return LABEL_ALIASES.get(t, t)
 
 SYNONYMS = {
     "people": "person", "persons": "person", "human": "person", "humans": "person", "man": "person",
@@ -245,7 +264,11 @@ class OnnxDetector:
         if not path.is_file():
             raise FileNotFoundError(f"detector model not found: {model_path}")
         self.path = path
-        self.labels = labels or COCO80
+        raw = labels or COCO80
+        self.raw_count = len(raw)
+        self.labels = [canonical_label(l) for l in raw]
+        uniq = list(dict.fromkeys(self.labels))
+        self._group = [uniq.index(l) for l in self.labels]  # NMS per canonical name (mug + coffee cup = one cup)
         self.conf, self.iou = conf, iou
         self.engine = "opencv-dnn"
         self._sess = None
@@ -286,7 +309,7 @@ class OnnxDetector:
 
         out = self._forward(self._blob(np.zeros((self.input_hw[0], self.input_hw[1], 3), np.uint8), "yolov8"))
         s = np.squeeze(out).shape
-        nc = len(self.labels)
+        nc = self.raw_count
         if len(s) == 2 and (s[0] == 4 + nc or s[1] == 4 + nc):
             return "yolov8"
         return "yolov5"
@@ -313,7 +336,10 @@ class OnnxDetector:
             boxes, scores, cls = decode_yolov8(out, self.conf)
         if len(boxes) == 0:
             return []
-        keep = nms(boxes, scores, cls, self.conf, self.iou)
+        import numpy as np
+
+        groups = np.array([self._group[int(c)] if int(c) < len(self._group) else 10_000 + int(c) for c in cls])
+        keep = nms(boxes, scores, groups, self.conf, self.iou)
         h, w = bgr.shape[:2]
         res = []
         for i in keep[:50]:
@@ -357,16 +383,29 @@ class HogPersonDetector:
         return out
 
 
+def _model_rank(name: str) -> int:
+    n = name.lower()
+    order = ("oiv7", "yolo11", "yolov8", "yolox_tiny", "yolox_nano", "yolox_s", "yolo")
+    return next((i for i, key in enumerate(order) if key in n), len(order))
+
+
 def find_default_model(models_dir: Path) -> Path | None:
-    """Prefer a YOLO11/YOLOv8 export, then YOLOX, in the repo's models/ folder."""
+    """Pick the detector in models/: the everyday-objects model (Open Images, knows pens) first, then
+    YOLO11/YOLOv8 exports, then the light YOLOX-Tiny before the heavier YOLOX-S."""
     if not models_dir.is_dir():
         return None
-    files = sorted(models_dir.glob("*.onnx"))
-    for pref in ("yolo11", "yolov8", "yolo", "yolox"):
-        for f in files:
-            if f.name.lower().startswith(pref):
-                return f
+    files = sorted(models_dir.glob("*.onnx"), key=lambda f: (_model_rank(f.name), f.name))
     return files[0] if files else None
+
+
+def labels_for_model(model: Path) -> list[str] | None:
+    """Class names shipped next to a model (``<model>.labels.txt`` or ``<model>.txt``), one per line."""
+    for cand in (model.with_suffix(".labels.txt"), model.with_suffix(".txt")):
+        if cand.is_file():
+            names = [l.strip() for l in cand.read_text().splitlines() if l.strip()]
+            if names:
+                return names
+    return None
 
 
 def timed(fn, *a):

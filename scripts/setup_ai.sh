@@ -1,28 +1,49 @@
 #!/usr/bin/env bash
 # One command to install STRIX-1's AI on the Raspberry Pi 5:
-#   1. YOLOX-S object detector (checksum-verified)             -> models/yolox_s.onnx
-#   2. llama.cpp's llama-server, built natively                  -> ~/llama.cpp
-#   3. Qwen vision-language model + its vision projector (GGUF)  -> models/
-#   4. strix1-llama systemd service (listens on 127.0.0.1:8080 only)
+#   1. YOLO object detector: YOLOX-Tiny (fast, checksum-verified), and optionally the
+#      600-object "everyday" model that also knows pens                -> models/
+#   2. llama.cpp's llama-server, built natively                          -> ~/llama.cpp
+#   3. Qwen vision-language model + its vision projector (GGUF)          -> models/
+#   4. strix1-llama systemd service (listens on 127.0.0.1:8080 only; starts on every boot)
 #   5. QWEN_* settings in .env, STRIX-1 restarted
 #
-# Usage:  scripts/setup_ai.sh          Qwen2.5-VL-3B-Instruct (best quality)
-#         scripts/setup_ai.sh --fast   Qwen2-VL-2B-Instruct  (faster answers on the Pi)
+# Usage:  scripts/setup_ai.sh             Qwen2-VL-2B-Instruct  (default: fast, keeps the Pi cooler)
+#         scripts/setup_ai.sh --best      Qwen2.5-VL-3B-Instruct (better answers, slower and hotter)
+#         add --everyday to also install the pens/phones/mugs detector without being asked
 #
-# Downloads about 3-4 GB; building llama.cpp takes 10-20 minutes. Run it inside tmux.
+# Downloads about 2-3 GB; building llama.cpp takes 10-20 minutes. Run it inside tmux.
 # Safe to re-run: finished steps are skipped. Asks for your sudo password (apt, systemd).
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
-HF_REPO="ggml-org/Qwen2.5-VL-3B-Instruct-GGUF"
-[ "${1:-}" = "--fast" ] && HF_REPO="ggml-org/Qwen2-VL-2B-Instruct-GGUF"
+HF_REPO="ggml-org/Qwen2-VL-2B-Instruct-GGUF"
+EVERYDAY=ask
+for a in "$@"; do
+  case "$a" in
+    --best) HF_REPO="ggml-org/Qwen2.5-VL-3B-Instruct-GGUF" ;;
+    --fast) HF_REPO="ggml-org/Qwen2-VL-2B-Instruct-GGUF" ;;
+    --everyday) EVERYDAY=yes ;;
+    --no-everyday) EVERYDAY=no ;;
+    *) echo "unknown option: $a"; exit 2 ;;
+  esac
+done
 LLAMA_DIR="$HOME/llama.cpp"
 BIN="$LLAMA_DIR/build/bin/llama-server"
 say() { printf '\n\033[32m==> %s\033[0m\n' "$*"; }
 
 say "1/5  Object detector (YOLO)"
-if ls models/*.onnx >/dev/null 2>&1; then echo "detector model already installed: $(ls models/*.onnx | head -1)"
+if [ -f models/yolox_tiny.onnx ]; then echo "already installed: models/yolox_tiny.onnx"
 else scripts/get_detector_model.sh; fi
+if [ ! -f models/yolov8n-oiv7.onnx ]; then
+  if [ "$EVERYDAY" = ask ] && [ -t 0 ]; then
+    read -r -p "Also install the everyday-objects detector (600 objects incl. pens; ~10 min, temporary 2 GB)? [y/N] " r
+    [[ "$r" =~ ^[Yy]$ ]] && EVERYDAY=yes
+  fi
+  if [ "$EVERYDAY" = yes ]; then
+    scripts/get_detector_model.sh --everyday || echo "WARNING: everyday model export failed; YOLOX-Tiny (80 objects) stays in use."
+  fi
+fi
+if [ -f models/yolox_s.onnx ]; then echo "note: models/yolox_s.onnx is no longer used by default (heavier); delete it to save space."; fi
 
 say "2/5  llama.cpp (llama-server)"
 if [ -x "$BIN" ]; then echo "already built: $BIN"
@@ -69,6 +90,8 @@ set_env QWEN_ENABLED true
 set_env QWEN_SERVER_URL http://127.0.0.1:8080
 set_env QWEN_MANAGE_SERVER auto
 set_env QWEN_MODEL_ID "${MODEL_FILE%.gguf}"
+set_env QWEN_MODEL_PATH "$REPO/models/$MODEL_FILE"
+set_env QWEN_MMPROJ_PATH "$REPO/models/$MMPROJ_FILE"
 if systemctl is-enabled --quiet strix1 2>/dev/null; then sudo systemctl restart strix1; echo "restarted strix1"; fi
 
 say "Waiting for Qwen to load (up to 3 minutes)…"
@@ -81,6 +104,6 @@ for _ in $(seq 1 90); do
   sleep 2
 done
 echo
-echo "Done. Open the dashboard: the QWEN row in SYSTEM STATUS should be green ('ready · vision')."
+echo "Done. Open the dashboard: the QWEN row in STATUS should be green ('ready · sees images'). It now starts by itself on every boot."
 echo "If STRIX-1 is not installed as a service, restart it now: scripts/run_backend.sh"
 echo "llama-server logs: journalctl -u strix1-llama -f"

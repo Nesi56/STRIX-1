@@ -54,12 +54,12 @@ export function DronePanel() {
           <button className="btn btn-sm" onClick={() => (view === "world" ? setFitNonce((n) => n + 1) : scene.current?.resetView())} title="Reset 3D view"><Crosshair size={11} /></button>
           <button className="btn btn-sm" disabled={!live} title="Zero relative yaw"
             onClick={() => void post("/api/imu/reset-yaw").then(() => toast("Yaw zeroed", "ok")).catch((e) => toast(errorMessage(e), "error"))}><RotateCcw size={11} /></button>
-          <button className="btn btn-sm btn-primary" disabled={!live || busy} onClick={() => void calibrate()}>
-            <Gauge size={11} /> {busy ? "Calibrating…" : "Calibrate"}
+          <button className="btn btn-sm btn-primary" disabled={!live || busy} onClick={() => void calibrate()} title="Calibrate the IMU (keep the drone still and level)">
+            <Gauge size={11} />{busy ? " …" : ""}
           </button>
         </div>
       </header>
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_150px]">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_112px]">
         <div className="relative min-h-[180px]">
           <Suspense fallback={<div className="p-3 text-[11px] text-dim">Loading 3D…</div>}>
             {view === "world"
@@ -73,23 +73,22 @@ export function DronePanel() {
           )}
           {view === "world" && (
             <div className="pointer-events-none absolute left-2 top-2 flex flex-wrap gap-x-2.5 gap-y-0.5 rounded-[3px] bg-black/60 px-2 py-1 text-[10px]">
-              <span style={{ color: MEM_COLOR.seen }}>■ SEEN {mem?.counts.seen ?? 0}</span>
-              <span style={{ color: MEM_COLOR.remembered }}>□ REMEMBERED {mem?.counts.remembered ?? 0}</span>
-              <span style={{ color: MEM_COLOR.hidden }}>◆ HIDDEN {mem?.counts.hidden ?? 0}</span>
-
+              <span style={{ color: MEM_COLOR.seen }}>■ {mem?.counts.seen ?? 0} seen</span>
+              <span style={{ color: MEM_COLOR.remembered }}>□ {mem?.counts.remembered ?? 0} remembered</span>
+              <span style={{ color: MEM_COLOR.hidden }}>◆ {mem?.counts.hidden ?? 0} hidden</span>
             </div>
           )}
 
         </div>
         <div className="space-y-1 border-l border-line p-2 text-[11px]">
-          <div className="flex justify-center"><AttitudeIndicator roll={s?.orientation.roll ?? 0} pitch={s?.orientation.pitch ?? 0} size={92} /></div>
+          <div className="flex justify-center"><AttitudeIndicator roll={s?.orientation.roll ?? 0} pitch={s?.orientation.pitch ?? 0} size={70} /></div>
           <div className="flex justify-between"><span className="text-muted">ROLL</span><span>{signed(s?.orientation.roll, 1)}°</span></div>
           <div className="flex justify-between"><span className="text-muted">PITCH</span><span>{signed(s?.orientation.pitch, 1)}°</span></div>
           <div className="flex justify-between"><span className="text-muted">YAW</span><span>{signed(s?.orientation.yaw_relative, 1)}°</span></div>
           {cal?.state !== "calibrated" && <div className="text-[10px] text-warn">not calibrated</div>}
           <div className="border-t border-line pt-1" />
-          <div className="flex justify-between"><span className="text-muted">TEMP</span><span>{env ? `${env.temperature_c.toFixed(1)}°C / ${cToF(env.temperature_c).toFixed(0)}°F` : "—"}</span></div>
-          <div className="flex justify-between"><span className="text-muted">HUMIDITY</span><span>{env ? `${env.humidity_pct.toFixed(0)} %` : "—"}</span></div>
+          <div className="flex justify-between"><span className="text-muted">TEMP</span><span title={env ? `${cToF(env.temperature_c).toFixed(0)} °F` : undefined}>{env ? `${env.temperature_c.toFixed(1)}°C` : "—"}</span></div>
+          <div className="flex justify-between"><span className="text-muted">HUMID</span><span>{env ? `${env.humidity_pct.toFixed(0)} %` : "—"}</span></div>
         </div>
       </div>
     </section>

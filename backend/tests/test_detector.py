@@ -113,3 +113,54 @@ def test_real_onnx_model_runs():
     det = OnnxDetector(str(MODEL))
     img = np.full((360, 640, 3), 128, np.uint8)
     assert isinstance(det.detect(img), list)
+
+
+def test_everyday_model_labels_are_mapped_and_merged(tmp_path):
+    """A 600-class Open Images model: names map to STRIX-1's names; mug + coffee cup boxes merge into one cup."""
+    import numpy as np
+
+    from app.services.detector import OnnxDetector, canonical_label, find_default_model, labels_for_model
+
+    names = [f"thing {i}" for i in range(600)]
+    names[10], names[11], names[12], names[13] = "Mug", "Coffee cup", "Pen", "Mobile phone"
+    (tmp_path / "yolov8n-oiv7.onnx").write_bytes(b"x")
+    (tmp_path / "yolox_s.onnx").write_bytes(b"x")
+    (tmp_path / "yolox_tiny.onnx").write_bytes(b"x")
+    (tmp_path / "yolov8n-oiv7.labels.txt").write_text("\n".join(names))
+    assert find_default_model(tmp_path).name == "yolov8n-oiv7.onnx"
+    (tmp_path / "yolov8n-oiv7.onnx").unlink()
+    assert find_default_model(tmp_path).name == "yolox_tiny.onnx"  # lighter YOLOX before YOLOX-S
+    labels = labels_for_model(tmp_path / "yolov8n-oiv7.onnx")
+    assert len(labels) == 600 and canonical_label("Mobile phone") == "cell phone"
+
+    det = OnnxDetector.__new__(OnnxDetector)  # skip loading a real network
+    det.path = tmp_path / "m.onnx"
+    det.raw_count = 600
+    det.labels = [canonical_label(n) for n in labels]
+    uniq = list(dict.fromkeys(det.labels))
+    det._group = [uniq.index(l) for l in det.labels]
+    det.conf, det.iou, det.input_hw, det.format = 0.3, 0.45, (416, 416), "yolov8"
+    out = np.zeros((1, 604, 3549), np.float32)  # real 416-px export: 3549 anchors
+    for j, (cx, cls, sc) in enumerate([(100, 10, 0.9), (102, 11, 0.8), (300, 12, 0.7)]):  # mug, coffee cup, pen
+        out[0, :4, j] = [cx, 200, 40, 50]
+        out[0, 4 + cls, j] = sc
+    det._forward = lambda blob: out
+    res = det.detect(np.zeros((416, 416, 3), np.uint8))
+    assert sorted(l for l, _, _ in res) == ["cup", "pen"]  # the two cup boxes merged into one
+
+
+def test_detector_slows_down_when_hot_or_qwen_busy(tmp_path):
+    from app.services.detector_service import DetectorService
+    from app.services.hub import EventLog
+    from tests.conftest import make_settings
+
+    s = make_settings(tmp_path, detector_hz=3.0)
+    load = {"v": (55.0, False)}
+    d = DetectorService(s, camera=None, events=EventLog(), load=lambda: load["v"])
+    assert d.period() == pytest.approx(1 / 3) and d.slowed is None
+    load["v"] = (60.0, True)
+    assert d.period() == pytest.approx(1 / 2) and d.slowed == "Qwen is thinking"
+    load["v"] = (77.0, False)
+    assert d.period() == pytest.approx(1 / 1.5) and "77" in d.slowed
+    load["v"] = (82.0, True)
+    assert d.period() == pytest.approx(1.0)
