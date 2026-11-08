@@ -142,7 +142,7 @@ Built and tested without the physical drone (x86-64 Linux, demo mode, headless b
 
 ## Documentation
 
-[JUDGES](docs/JUDGES.md) · [SETUP_PI](docs/SETUP_PI.md) · [HARDWARE](docs/HARDWARE.md) · [AI](docs/AI.md) ·
+[JUDGES](docs/JUDGES.md) · [DEVPOST](docs/DEVPOST.md) · [SETUP_PI](docs/SETUP_PI.md) · [HARDWARE](docs/HARDWARE.md) · [AI](docs/AI.md) ·
 [STREAMING](docs/STREAMING.md) · [API](docs/API.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) ·
 [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) · [HARDWARE_VERIFICATION](docs/HARDWARE_VERIFICATION.md)
 
