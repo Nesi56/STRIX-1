@@ -2,7 +2,8 @@
 .env
 .env.*
 !.env.example
-data/
+# runtime data: database, media, logs (repo root only)
+/data/
 *.pem
 *.key
 
@@ -23,7 +24,8 @@ frontend/coverage/
 *.tsbuildinfo
 
 # --- models, media, recordings
-models/
+# downloaded GGUF/ONNX model files (repo root only — not backend/app/models!)
+/models/
 *.gguf
 *.onnx
 *.mp4
