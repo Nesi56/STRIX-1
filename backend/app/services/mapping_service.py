@@ -1,31 +1,24 @@
-"""Environment observation and (experimental) visual mapping.
+"""Localization status and (experimental) visual odometry.
 
-Mode A — sensor orientation: drone at a fixed origin, orientation from IMU.
-Mode B — visual observations: OpenCV scene analysis log (image-relative).
-Mode C — experimental mapping: pluggable localization sources. A monocular
-         visual-odometry source is provided as an *experimental* relative
-         trajectory (unknown scale, unbounded drift). It is never marked
-         validated, so the system position remains:
-         "Position unavailable — no validated localization source."
+Pluggable localization sources. A monocular visual-odometry source is provided
+as an *experimental* relative trajectory (unknown scale, unbounded drift). It is
+never marked validated, so the system position remains:
+"Position unavailable — no validated localization source."
 
 IMU acceleration is never integrated into a position.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import math
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from app.config.settings import Settings
-from app.database.db import Database
 from app.services.base import StoppableThread
 from app.services.camera_service import CameraService
 from app.services.hub import EventLog
@@ -181,23 +174,20 @@ class MonocularVO:
 
 # ----------------------------------------------------------------------
 class MappingService:
-    def __init__(self, settings: Settings, camera: CameraService, db: Database, events: EventLog,
-                 active_session_id=lambda: None) -> None:
+    """Localization status (Mode C) and the experimental visual odometry source.
+
+    Object detections (with estimated range/bearing for the radar view) live in
+    ``detector_service``; this service never turns them into a position.
+    """
+
+    def __init__(self, settings: Settings, camera: CameraService, events: EventLog) -> None:
         self.settings = settings
         self.camera = camera
-        self.db = db
         self.events = events
-        self._session_id = active_session_id
-        self.observations: deque[dict[str, Any]] = deque(maxlen=200)
-        self._analyzer = None
-        self._analyzer_error: str | None = None
         self._lock = threading.Lock()
-        self.auto_interval_s = settings.vision_auto_interval_s
-        self._auto_task: asyncio.Task | None = None
         self._vo: MonocularVO | None = None
         self._vo_thread: StoppableThread | None = None
         self.vo_error: str | None = None
-        self._busy = asyncio.Lock()
         self.sources: dict[str, LocalizationSource] = {
             "visual_odometry": LocalizationSource(
                 "visual_odometry", "Monocular visual odometry (OpenCV ORB)", "visual_odometry",
@@ -211,91 +201,12 @@ class MappingService:
                                        note="Not installed. Future integration point (e.g. ORB-SLAM3, OpenVINS)."),
         }
 
-    # ---------------------------------------------------------- lifecycle
-    def _get_analyzer(self):
-        if self._analyzer is None and self._analyzer_error is None:
-            try:
-                from app.services.vision import SceneAnalyzer
-
-                self._analyzer = SceneAnalyzer(self.settings.vision_onnx_model, self.settings.vision_onnx_labels,
-                                               self.settings.vision_conf_threshold)
-            except Exception as exc:  # OpenCV missing
-                self._analyzer_error = f"vision pipeline unavailable: {exc}"
-                log.warning(self._analyzer_error)
-        return self._analyzer
-
     async def start(self) -> None:
-        self._load_recent()
-        self._auto_task = asyncio.create_task(self._auto_loop(), name="vision-auto")
         if self.settings.vo_enabled:
             self.set_vo(True)
 
     async def stop(self) -> None:
-        if self._auto_task:
-            self._auto_task.cancel()
         self.set_vo(False)
-
-    def _load_recent(self) -> None:
-        try:
-            rows = self.db.query("SELECT ts, source, kind, data FROM observations ORDER BY ts DESC LIMIT 50")
-        except Exception:
-            return
-        for r in reversed(rows):
-            try:
-                d = json.loads(r["data"])
-                d.setdefault("ts", r["ts"])
-                self.observations.append(d)
-            except Exception:
-                continue
-
-    # ---------------------------------------------------------- Mode B
-    def _analyze_sync(self, trigger: str, image_path: Path | None) -> dict[str, Any]:
-        analyzer = self._get_analyzer()
-        if analyzer is None:
-            raise RuntimeError(self._analyzer_error or "vision unavailable")
-        import cv2
-
-        seq, frame = self.camera.hub.latest()
-        meta: dict[str, Any] = {}
-        if image_path is not None:
-            bgr = cv2.imread(str(image_path))
-            if bgr is None:
-                raise RuntimeError("could not read snapshot image")
-            meta = {"source": "snapshot", "snapshot": image_path.name, "synthetic": "_synthetic" in image_path.name}
-            ts = image_path.stat().st_mtime
-            w = self.settings.camera_analysis_width
-            if bgr.shape[1] > w:
-                bgr = cv2.resize(bgr, (w, int(w * bgr.shape[0] / bgr.shape[1])), interpolation=cv2.INTER_AREA)
-        else:
-            bgr = self.camera.analysis_frame()
-            ts = time.time()
-            meta = {"source": "live", "frame_seq": seq, "synthetic": bool(frame.synthetic) if frame else self.camera.status.synthetic}
-        result = analyzer.analyze(bgr, meta)
-        result.update({"ts": ts, "trigger": trigger, "id": f"obs-{int(ts * 1000)}"})
-        return result
-
-    async def analyze_now(self, trigger: str = "manual", image_path: Path | None = None) -> dict[str, Any]:
-        async with self._busy:
-            obs = await asyncio.to_thread(self._analyze_sync, trigger, image_path)
-        self.observations.append(obs)
-        self.db.enqueue("INSERT INTO observations(session_id, ts, source, kind, data) VALUES (?,?,?,?,?)",
-                        (self._session_id(), obs["ts"], "opencv", obs["kind"], json.dumps(obs)))
-        return obs
-
-    async def _auto_loop(self) -> None:
-        while True:
-            interval = self.auto_interval_s
-            if interval and interval > 0 and self.camera.available:
-                try:
-                    await self.analyze_now("auto")
-                except Exception as exc:
-                    log.debug("auto analysis skipped: %s", exc)
-                await asyncio.sleep(interval)
-            else:
-                await asyncio.sleep(1.0)
-
-    def latest_observations(self, n: int = 20) -> list[dict[str, Any]]:
-        return list(self.observations)[-n:]
 
     # ---------------------------------------------------------- Mode C
     def set_vo(self, enabled: bool) -> dict[str, Any]:
@@ -305,7 +216,7 @@ class MappingService:
                 self.vo_error = "camera unavailable"
                 return self.vo_state()
             try:
-                self._vo = MonocularVO(self.settings.vo_camera_hfov_deg)
+                self._vo = MonocularVO(self.settings.camera_hfov_deg)
             except Exception as exc:
                 self.vo_error = f"OpenCV unavailable: {exc}"
                 return self.vo_state()
@@ -358,10 +269,7 @@ class MappingService:
         }
 
     def position(self) -> dict[str, Any]:
-        validated = [s for s in self.sources.values() if s.validated and s.running]
-        if not validated:
-            return {"available": False, "message": POSITION_UNAVAILABLE, "source": None}
-        # Reserved for future validated sources (e.g. GNSS fix with HDOP).
+        # Only a validated, running source may ever provide a position (none exists yet).
         return {"available": False, "message": POSITION_UNAVAILABLE, "source": None}
 
     def state(self, include_trajectory: bool = True) -> dict[str, Any]:
@@ -369,13 +277,5 @@ class MappingService:
             "position": self.position(),
             "sources": [s.to_dict() for s in self.sources.values()],
             "visual_odometry": self.vo_state() if include_trajectory else {"enabled": self._vo_thread is not None},
-            "vision": {
-                "available": self._get_analyzer() is not None,
-                "error": self._analyzer_error,
-                "methods": self._analyzer.methods if self._analyzer else [],
-                "auto_interval_s": self.auto_interval_s,
-                "observations": len(self.observations),
-                "latest": self.observations[-1] if self.observations else None,
-            },
             "imu_position": "not computed — accelerometer double integration is not a valid localization source",
         }

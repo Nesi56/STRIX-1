@@ -3,7 +3,7 @@
 All settings come from environment variables (optionally loaded from the
 repository-level ``.env`` file). Application settings use the ``STRIX_``
 prefix; the AI integrations use the names requested in the project spec
-(``QWEN_*``, ``XAI_API_KEY``, ``GROK_MODEL``, ``GROK_ENABLED`` ...).
+(``QWEN_*``).
 
 Secrets (auth token, xAI key) are wrapped in ``SecretStr`` so they are never
 printed in logs or returned by the API.
@@ -98,6 +98,8 @@ class Settings(BaseSettings):
     servo_pwm_channel: int = 2  # Pi 5: GPIO18 = RP1 PWM0 channel 2 (verify!)
     servo_detach_when_idle: bool = True
     servo_start_armed: bool = False
+    # true: a larger angle tilts the camera UP. Flip if your mount is mirrored.
+    servo_up_is_positive: bool = True
 
     # ------------------------------------------------------------------ camera
     camera_backend: Literal["auto", "picamera2", "mock", "disabled"] = "auto"
@@ -119,13 +121,24 @@ class Settings(BaseSettings):
     recording_retention_days: int = Field(30, ge=0, le=3650)  # 0 = keep forever
     recording_max_db_mb: int = Field(2048, ge=16)
 
-    # ------------------------------------------------------ vision / mapping
-    vision_auto_interval_s: float = Field(0.0, ge=0.0, le=3600.0)  # 0 = manual only
-    vision_onnx_model: str = ""  # optional YOLOv8-style ONNX detector
-    vision_onnx_labels: str = ""  # optional labels file (one per line); COCO default
-    vision_conf_threshold: float = Field(0.40, ge=0.05, le=0.99)
+    # ------------------------------------------------- detector ("YOLO stream")
+    # auto: synthetic boxes with the mock camera; ONNX model if one is found; else HOG person detector.
+    detector_backend: Literal["auto", "onnx", "hog", "synthetic", "disabled"] = "auto"
+    detector_model: str = ""  # empty = first *.onnx in <repo>/models (yolo11*/yolov8*/yolox* preferred)
+    detector_format: Literal["auto", "yolov8", "yolox", "yolov5"] = "auto"
+    detector_labels: str = ""  # optional labels file (one per line); COCO-80 by default
+    detector_conf: float = Field(0.35, ge=0.05, le=0.99)
+    detector_iou: float = Field(0.45, ge=0.1, le=0.9)
+    detector_imgsz: int = Field(0, ge=0, le=1280)  # 0 = from the model (OpenCV DNN: 640)
+    detector_hz: float = Field(4.0, ge=0.5, le=30.0)  # upper bound; inference time limits it
+    detector_prompts: str = "person"  # comma separated classes shown on the video
+    camera_hfov_deg: float = Field(102.0, ge=30.0, le=180.0)  # Camera Module 3 Wide
+
+    # ------------------------------------------------------------- agent
+    agent_max_plan_steps: int = Field(5, ge=1, le=10)
+    agent_skill_timeout_s: float = Field(12.0, ge=2.0, le=60.0)
+    agent_standoff_m: float = Field(1.5, ge=0.3, le=20.0)  # distance used for approach suggestions
     vo_enabled: bool = False
-    vo_camera_hfov_deg: float = Field(102.0, ge=30.0, le=180.0)  # Camera Module 3 Wide
 
     # -------------------------------------------------------------- local Qwen
     qwen_enabled: bool = Field(True, validation_alias=_alias("QWEN_ENABLED", "qwen_enabled"))
@@ -160,36 +173,6 @@ class Settings(BaseSettings):
     )
     qwen_api_key: SecretStr | None = Field(
         None, validation_alias=_alias("QWEN_API_KEY", "qwen_api_key")
-    )
-
-    # ------------------------------------------------------------- Grok cloud
-    xai_api_key: SecretStr | None = Field(None, validation_alias=_alias("XAI_API_KEY", "xai_api_key"))
-    grok_enabled: bool = Field(False, validation_alias=_alias("GROK_ENABLED", "grok_enabled"))
-    grok_model: str = Field("grok-4", validation_alias=_alias("GROK_MODEL", "grok_model"))
-    grok_base_url: str = Field(
-        "https://api.x.ai/v1", validation_alias=_alias("GROK_BASE_URL", "grok_base_url")
-    )
-    grok_timeout_s: float = Field(
-        60.0, ge=5.0, le=600.0, validation_alias=_alias("GROK_TIMEOUT_S", "grok_timeout_s")
-    )
-    grok_rate_limit_per_min: int = Field(
-        4, ge=1, le=120, validation_alias=_alias("GROK_RATE_LIMIT_PER_MIN", "grok_rate_limit_per_min")
-    )
-    grok_daily_request_limit: int = Field(
-        200, ge=1, validation_alias=_alias("GROK_DAILY_REQUEST_LIMIT", "grok_daily_request_limit")
-    )
-    grok_max_tokens: int = Field(
-        1024, ge=16, le=16384, validation_alias=_alias("GROK_MAX_TOKENS", "grok_max_tokens")
-    )
-    grok_vision: Literal["auto", "true", "false"] = Field(
-        "auto", validation_alias=_alias("GROK_VISION", "grok_vision")
-    )
-    # USD per million tokens, used only for the approximate cost display.
-    grok_price_input_per_mtok: float | None = Field(
-        None, validation_alias=_alias("GROK_PRICE_INPUT_PER_MTOK", "grok_price_input_per_mtok")
-    )
-    grok_price_output_per_mtok: float | None = Field(
-        None, validation_alias=_alias("GROK_PRICE_OUTPUT_PER_MTOK", "grok_price_output_per_mtok")
     )
 
     # ---------------------------------------------------------------- helpers

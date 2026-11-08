@@ -58,7 +58,9 @@ def test_validation_errors_are_structured(client):
     assert r.json()["error"]["code"] == "validation_error"
     assert client.post("/api/servo/angle", json={"angle": 90, "extra": 1}).status_code == 422
     assert client.post("/api/camera/config", json={"width": 10, "height": 10, "fps": 30}).status_code == 422
-    assert client.post("/api/ai/chat", json={"message": ""}).status_code == 422
+    assert client.post("/api/agent/run", json={"task": ""}).status_code == 422
+    assert client.post("/api/servo/nudge", json={"up_deg": 500}).status_code == 422
+    assert client.post("/api/detector/prompts", json={"prompts": "person"}).status_code == 422
 
 
 def test_servo_flow(client):
@@ -160,5 +162,5 @@ def test_api_docs_require_auth(anon_client, client):
     assert anon_client.get("/api/openapi.json").status_code == 401
     assert anon_client.get("/api/docs").status_code == 401
     schema = client.get("/api/openapi.json").json()
-    assert "/api/servo/angle" in schema["paths"] and "/api/ai/chat" in schema["paths"]
+    assert "/api/servo/angle" in schema["paths"] and "/api/agent/run" in schema["paths"] and "/api/estop" in schema["paths"]
     assert client.get("/api/docs").status_code == 200

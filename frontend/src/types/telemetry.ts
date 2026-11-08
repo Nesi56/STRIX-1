@@ -54,6 +54,8 @@ export interface ServoState {
   pulse_range_us: [number, number];
   gpio: number;
   position_feedback: boolean;
+  tilt_deg: number | null;
+  up_is_positive: boolean;
   requested_angle?: number;
   clamped?: boolean;
 }
@@ -114,30 +116,40 @@ export interface AIStats {
 
 export interface AIBrief {
   provider: string; label: string; enabled: boolean; state: string; detail: string | null; busy?: boolean; queued?: number;
-  vision_capable: boolean; model_id?: string; model?: string; configured?: boolean; local: boolean;
-  daily_used?: number; daily_limit?: number; last: AIStats | null;
+  vision_capable: boolean; model_id?: string; last: AIStats | null;
+}
+
+export interface DetectedObject {
+  label: string; confidence: number; bbox: [number, number, number, number];
+  distance_m: number | null; distance_kind: "estimate" | "upper_bound" | "none";
+  bearing_deg: number; elevation_deg: number; source: string;
+}
+
+export interface DetectionResult {
+  seq: number; ts: number; frame_seq: number; frame_w: number; frame_h: number;
+  detections: DetectedObject[]; synthetic: boolean; prompts: string[];
+}
+
+export interface DetectorState {
+  status: DeviceStatus; engine: string; description: string; prompts: string[]; vocabulary_size: number;
+  fps: number; infer_ms: number | null; hfov_deg: number; distance_method: string;
+}
+
+export interface PlanStep {
+  skill: string; text: string; status: "pending" | "running" | "done" | "failed" | "skipped"; result?: string;
+  target?: string; tilt?: number; delta?: number; seconds?: number;
+}
+
+export interface AgentState {
+  status: "idle" | "running" | "done" | "stopped" | "error";
+  node: "generator" | "observer" | "pilot" | "until" | "report" | "complete" | null;
+  plan: PlanStep[]; task: string | null; run_id: string | null; planner: "qwen" | "rules" | null;
+  step: number | null; error: string | null;
 }
 
 export interface LocalizationSource {
   id: string; name: string; kind: string; installed: boolean; running: boolean; validated: boolean;
   experimental: boolean; note: string; frame: string;
-}
-
-export interface Detection {
-  label: string; category: string; method: string; confidence: number; bbox: [number, number, number, number];
-  area_fraction?: number;
-}
-
-export interface Observation {
-  id: string; ts: number; kind: string; trigger: string;
-  frame: { width: number; height: number; source?: string; frame_seq?: number; snapshot?: string; synthetic?: boolean };
-  detections: Detection[];
-  metrics: Record<string, number | null>;
-  quality_flags: string[];
-  methods: string[];
-  summary: string;
-  processing_ms: number;
-  note: string;
 }
 
 export interface VOState {
@@ -159,7 +171,6 @@ export interface MappingState {
   position: { available: boolean; message: string; source: string | null };
   sources: LocalizationSource[];
   visual_odometry: VOState;
-  vision: { available: boolean; error: string | null; methods: string[]; auto_interval_s: number; observations: number; latest: Observation | null };
   imu_position: string;
 }
 
@@ -185,8 +196,11 @@ export interface TelemetryState {
   servo: ServoState | null;
   camera: CameraStatus | null;
   system: SystemInfo | null;
-  ai: { qwen: AIBrief; grok: AIBrief } | null;
+  ai: { qwen: AIBrief } | null;
   mapping: MappingState | null;
+  detections?: DetectionResult | null;
+  detector?: DetectorState;
+  agent?: AgentState;
   recording: RecordingStatus | null;
 }
 
@@ -204,19 +218,3 @@ export interface TelemetryRow {
 
 export interface MediaFile { name: string; bytes: number; modified: number; synthetic: boolean }
 
-export interface ChatMessage {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  ts: number;
-  provider?: string | null;
-  label?: string;
-  local?: boolean;
-  streaming?: boolean;
-  error?: string;
-  notes?: string[];
-  stats?: AIStats;
-  telemetry_shared?: boolean;
-  image_sent?: boolean;
-  sanitized?: boolean;
-}

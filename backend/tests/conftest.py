@@ -26,7 +26,6 @@ def make_settings(tmp_path, **overrides) -> Settings:
         telemetry_hz=20,
         recording_sample_hz=20,
         qwen_server_url="http://127.0.0.1:9",  # nothing listens here
-        grok_enabled=False,
         log_level="WARNING",
     )
     base.update(overrides)

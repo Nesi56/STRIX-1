@@ -81,7 +81,7 @@ export function SystemPanel({ className, detailed = false }: { className?: strin
           <div className="label flex items-center gap-1"><MemoryStick size={10} />AI inference</div>
           <div className="num">Qwen: {ai?.qwen.state ?? "—"}{ai?.qwen.last?.tokens_per_s != null ? ` · ${ai.qwen.last.tokens_per_s.toFixed(1)} tok/s · ${((ai.qwen.last.latency_ms ?? 0) / 1000).toFixed(1)} s` : ""}</div>
           {qwenProc && <div className="num text-muted">llama-server {qwenProc.rss_mb.toFixed(0)} MB · {qwenProc.cpu_percent.toFixed(0)}% CPU</div>}
-          <div className="num text-muted">Grok: {ai?.grok.state ?? "—"}{ai?.grok.last?.latency_ms != null ? ` · ${(ai.grok.last.latency_ms / 1000).toFixed(1)} s` : ""}</div>
+          <div className="num text-muted">YOLO: {st?.detector ? `${st.detector.fps.toFixed(1)} fps · ${st.detector.infer_ms?.toFixed(0) ?? "—"} ms · ${st.detector.engine}` : "—"}</div>
         </div>
         <div>
           <div className="label flex items-center gap-1"><Thermometer size={10} />Throttling</div>

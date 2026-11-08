@@ -85,6 +85,7 @@ class TelemetryService:
         self._task: asyncio.Task | None = None
         self._last_full = 0.0
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._last_det_seq = -1
 
     def demo_mode(self) -> bool:
         c = self.c
@@ -92,7 +93,12 @@ class TelemetryService:
 
     def fast_part(self) -> dict[str, Any]:
         c = self.c
-        return {"imu": {"status": c.imu.status.to_dict(), "latest": c.imu.latest()}}
+        out: dict[str, Any] = {"imu": {"status": c.imu.status.to_dict(), "latest": c.imu.latest()}, "agent": c.agent.snapshot()}
+        det = c.detector.latest()
+        if det is not None and det["seq"] != self._last_det_seq:
+            self._last_det_seq = det["seq"]
+            out["detections"] = det
+        return out
 
     def slow_part(self) -> dict[str, Any]:
         c = self.c
@@ -107,7 +113,8 @@ class TelemetryService:
             "servo": c.servo.state(),
             "camera": cam,
             "system": c.system.latest(),
-            "ai": {"qwen": _ai_brief(c.qwen.status()), "grok": _ai_brief(c.grok.status())},
+            "ai": {"qwen": _ai_brief(c.qwen.status())},
+            "detector": c.detector.state(),
             "mapping": c.mapping.state(include_trajectory=False),
             "recording": c.recording.status(),
         }
@@ -115,6 +122,7 @@ class TelemetryService:
     def snapshot(self) -> dict[str, Any]:
         """Full composite snapshot (used by the recorder and REST)."""
         snap = {"ts": time.time(), "demo_mode": self.demo_mode(), **self.fast_part(), **self.slow_part()}
+        snap["detections"] = self.c.detector.latest()  # always include the newest result
         return snap
 
     def recorder_snapshot(self) -> dict[str, Any]:
@@ -181,9 +189,8 @@ class TelemetryService:
 
 
 def _ai_brief(s: dict[str, Any]) -> dict[str, Any]:
-    keep = ("provider", "label", "enabled", "state", "detail", "busy", "queued", "vision_capable", "model_id", "model",
-            "configured", "local", "daily_used", "daily_limit")
+    keep = ("provider", "label", "enabled", "state", "detail", "busy", "queued", "vision_capable", "model_id")
     out = {k: s.get(k) for k in keep if k in s}
-    stats = s.get("stats") or s.get("usage") or {}
+    stats = s.get("stats") or {}
     out["last"] = stats.get("last")
     return out

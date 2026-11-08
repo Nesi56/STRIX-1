@@ -20,7 +20,7 @@ function Arm({ angle, front }: { angle: number; front: boolean }) {
     <group>
       <mesh position={[x / 2, 0, z / 2]} rotation={[0, -angle, 0]}>
         <boxGeometry args={[0.16, 0.06, ARM]} />
-        <meshStandardMaterial color={front ? "#1f6f8a" : "#2a3343"} metalness={0.3} roughness={0.6} />
+        <meshStandardMaterial color={front ? "#1e6e45" : "#2b322d"} metalness={0.3} roughness={0.6} />
       </mesh>
       <mesh position={[x, 0.09, z]}>
         <cylinderGeometry args={[0.13, 0.13, 0.16, 24]} />
@@ -28,7 +28,7 @@ function Arm({ angle, front }: { angle: number; front: boolean }) {
       </mesh>
       <mesh position={[x, 0.2, z]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={[0.635, 40]} />
-        <meshStandardMaterial color={front ? "#38d6ff" : "#ff5468"} transparent opacity={0.18} side={THREE.DoubleSide} />
+        <meshStandardMaterial color={front ? "#3ddc84" : "#ff4d5e"} transparent opacity={0.18} side={THREE.DoubleSide} />
       </mesh>
     </group>
   );
@@ -69,13 +69,13 @@ function Quad({ smoothing, lockYaw, cameraTilt }: { smoothing: boolean; lockYaw:
         </mesh>
         <mesh position={[0, 0, -0.08]} rotation={[Math.PI / 2, 0, 0]}>
           <cylinderGeometry args={[0.06, 0.06, 0.06, 20]} />
-          <meshStandardMaterial color="#38d6ff" emissive="#0b4a5c" />
+          <meshStandardMaterial color="#3ddc84" emissive="#0f4a2c" />
         </mesh>
       </group>
       {/* nose arrow */}
       <mesh position={[0, 0.02, -1.0]} rotation={[-Math.PI / 2, 0, 0]}>
         <coneGeometry args={[0.1, 0.3, 3]} />
-        <meshStandardMaterial color="#38d6ff" emissive="#1d7f9c" />
+        <meshStandardMaterial color="#3ddc84" emissive="#1e6e45" />
       </mesh>
       <axesHelper args={[0.9]} />
     </group>
@@ -90,14 +90,14 @@ const DroneScene = forwardRef<DroneSceneHandle, { smoothing: boolean; lockYaw: b
     useImperativeHandle(ref, () => ({ resetView: () => controls.current?.reset() }));
     return (
       <Canvas camera={{ position: [2.6, 1.9, 3.2], fov: 45 }} dpr={[1, 2]} gl={{ antialias: true }}>
-        <color attach="background" args={["#040912"]} />
+        <color attach="background" args={["#0a0c0b"]} />
         <ambientLight intensity={0.55} />
         <directionalLight position={[3, 5, 2]} intensity={1.3} />
-        <directionalLight position={[-3, 2, -4]} intensity={0.4} color="#4c8dff" />
+        <directionalLight position={[-3, 2, -4]} intensity={0.4} color="#9fe7bf" />
         <Quad {...props} />
         {/* Reference horizon plane and world axes (fixed, not geographic) */}
-        <Grid position={[0, -0.6, 0]} args={[20, 20]} cellSize={0.5} cellThickness={0.5} cellColor="#16304d"
-          sectionSize={2.5} sectionThickness={1} sectionColor="#1d7f9c" fadeDistance={22} infiniteGrid />
+        <Grid position={[0, -0.6, 0]} args={[20, 20]} cellSize={0.5} cellThickness={0.5} cellColor="#1c2a21"
+          sectionSize={2.5} sectionThickness={1} sectionColor="#1e6e45" fadeDistance={22} infiniteGrid />
         <axesHelper args={[1.6]} position={[0, -0.6, 0]} />
         <OrbitControls ref={controls} makeDefault enablePan={false} minDistance={2} maxDistance={12} />
       </Canvas>

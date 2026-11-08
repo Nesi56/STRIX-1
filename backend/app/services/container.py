@@ -13,10 +13,10 @@ from typing import Any
 
 from app.config.settings import Settings
 from app.database.db import Database
-from app.services.ai_grok_service import GrokService
+from app.services.agent_service import AgentService
 from app.services.ai_qwen_service import QwenService
-from app.services.ai_service import AIService
 from app.services.camera_service import CameraService
+from app.services.detector_service import DetectorService
 from app.services.dht_service import DHTService
 from app.services.hub import EventLog
 from app.services.imu_service import IMUService
@@ -43,11 +43,11 @@ class Container:
         self.telemetry = TelemetryService(self)
         self.recording = RecordingService(settings, self.db, self.events, self.telemetry.recorder_snapshot,
                                           self.telemetry.demo_mode)
-        self.mapping = MappingService(settings, self.camera, self.db, self.events,
-                                      active_session_id=lambda: (self.recording.active_session or {}).get("id"))
+        self.mapping = MappingService(settings, self.camera, self.events)
+        self.detector = DetectorService(settings, self.camera, self.events, self.db,
+                                        session_id=lambda: (self.recording.active_session or {}).get("id"))
         self.qwen = QwenService(settings, self.events, register_process=self.system.register_process)
-        self.grok = GrokService(settings, self.events)
-        self.ai = AIService(self, self.qwen, self.grok)
+        self.agent = AgentService(self)
         self.events.listeners.append(self.telemetry.broadcast_event)
         self.started = False
 
@@ -75,13 +75,11 @@ class Container:
         await self._safe("dht11", self.dht.start)
         await self._safe("servo", self.servo.start)
         await self._safe("camera", lambda: asyncio.to_thread(self.camera.start))
+        await self._safe("detector", self.detector.start)
         await self._safe("recording", self.recording.start)
         await self._safe("mapping", self.mapping.start)
         await self._safe("telemetry", self.telemetry.start)
         await self._safe("qwen", self.qwen.start)
-        await self._safe("grok", self.grok.start)
-        if self.grok.enabled:
-            asyncio.create_task(self.grok.refresh_model_info())
         self.started = True
         mode = "SYNTHETIC DEMO MODE" if self.settings.mock else "hardware mode"
         self.events.add("info", "system", f"STRIX-1 backend started ({mode})")
@@ -89,13 +87,14 @@ class Container:
     async def stop(self) -> None:
         for name, fn in (
             ("telemetry", self.telemetry.stop), ("recording", self.recording.stop), ("mapping", self.mapping.stop),
-            ("qwen", self.qwen.stop), ("grok", self.grok.stop),
+            ("qwen", self.qwen.stop),
         ):
             try:
                 await fn()
             except Exception:
                 log.exception("%s shutdown error", name)
-        for name, fn in (("servo", self.servo.stop), ("camera", self.camera.stop), ("dht11", self.dht.stop),
+        self.agent.stop("backend shutting down")
+        for name, fn in (("detector", self.detector.stop), ("servo", self.servo.stop), ("camera", self.camera.stop), ("dht11", self.dht.stop),
                          ("imu", self.imu.stop), ("system", self.system.stop)):
             try:
                 await asyncio.to_thread(fn)

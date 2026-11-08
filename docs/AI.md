@@ -1,116 +1,125 @@
-# AI: local Qwen, Grok cloud and hybrid analysis
+# AI: the Qwen camera agent
 
-## Design principles
+STRIX-1 runs **one** AI model: a small **Qwen** model running locally on the Raspberry Pi 5 through
+llama.cpp. No cloud service is used. Qwen:
 
-- **Grounded.** Every question is answered with a timestamped *telemetry context* built by
-  `backend/app/services/ai_context.py`. It holds the latest IMU sample, 60 s statistics,
-  deterministic IMU health findings, the DHT11 reading plus its 5-minute trend and session
-  extremes, servo state, camera status, the latest OpenCV detector summaries, system health and
-  an explicit list of **unavailable** quantities (GPS, altitude, ground speed, compass heading,
-  battery %, scene distances). The data mode (*live hardware* or *SYNTHETIC DEMO DATA*) is
-  stated explicitly.
-- **Labeled claims.** The system prompt requires `[MEASURED]`, `[INTERPRETATION]` and
-  `[UNAVAILABLE]` tags. The dashboard renders them as colored badges.
-- **No hidden vision.** A text-only model never receives an image. Attached snapshots are
-  analysed on the Pi with OpenCV and only the detector results are sent. Images go to a model
-  only when it reports vision capability: llama-server `/props` → `modalities.vision`, or xAI
-  `input_modalities` contains `image`.
-- **No actions.** The assistant has no tools and cannot move the servo or the aircraft. The
-  backend never executes model output. As defence in depth, fenced shell/command blocks are
-  stripped from responses, even mid-stream (`app/core/safety.py`), and responses are labeled *FILTERED*.
-- **No silent cloud fallback.** If the local model is down, the answer comes from a
-  deterministic *telemetry digest*, never from Grok.
+1. **controls the camera tilt servo** (look up/down, center, scan, find an object, keep it centered),
+2. **reads the sensors**: MPU6050 attitude, DHT11 temperature/humidity, and YOLO detections,
+3. **estimates distance and direction** to detected objects,
+4. **suggests how to move** or how to complete the task. The human pilot flies the drone;
+   STRIX-1 never sends flight commands.
 
-## Local Qwen (llama.cpp)
+## The agent graph
+
+The dashboard's **AGENT GRAPH** tab lights up each stage as it runs:
+
+```
+GENERATOR ──plan──▶ EXECUTION LOOP [ OBSERVER → PILOT → UNTIL ↺ ] ──complete──▶ REPORT
+```
+
+| Stage | What happens | Code |
+|---|---|---|
+| **GENERATOR** | Qwen turns the operator's task into a plan of at most 5 camera *skills*. Output is constrained by a JSON schema (llama-server `response_format` → grammar), so even a 1.5–3 B model always returns valid, parseable JSON. The plan is then validated: unknown skills or classes are dropped and angles are clamped to the servo's safe range. | `agent_service._plan`, `ai_context.PLAN_SCHEMA` |
+| **OBSERVER** | Snapshot of IMU, DHT11, servo state and the newest YOLO detections (with range/bearing). | `ai_context.observe` |
+| **PILOT** | Starts the skill on the camera servo. All motion goes through `ServoService`, which enforces the safe limits, the slew rate and the operator's enable switch. | `agent_service._skill` |
+| **UNTIL** | Polls the skill's completion condition at the detector rate: *reached*, *found*, *centered* or timeout. | `agent_service._skill` |
+| **REPORT** | Qwen writes the answer from the final observation, the action log and **deterministic** movement suggestions. Tags: `[MEASURED]`, `[DETECTED]`, `SUGGEST:`, `[INTERPRETATION]`, `[UNAVAILABLE]`. | `ai_context.REPORT_PROMPT` |
+
+### Skills (the only things the agent can do)
+
+| Skill | Args | Completes when |
+|---|---|---|
+| `look` | `tilt` (° from level, + up) | servo reached the target |
+| `tilt` | `delta` (°) | servo reached the target |
+| `center` | — | camera level |
+| `scan` | — | swept 5 tilt angles, then returns to the best view |
+| `find` | `target` (COCO class) | target detected (or not found in range) |
+| `track` | `target`, `seconds` | time elapsed. A proportional controller keeps the target vertically centered. Fails if the target is lost for > 3 s. |
+| `wait` | `seconds` | time elapsed |
+
+The servo only tilts. Horizontal alignment is given as a suggestion ("yaw right ~14°").
+
+### Distance and movement suggestions
+
+- **Distance** comes from the object's apparent size with a pinhole camera model:
+  `distance ≈ f · H / h`, where `f = (W/2)/tan(HFOV/2)` (HFOV 102° for the Camera Module 3 Wide), `H` is
+  a typical object height (person 1.7 m, car 1.5 m, chair 0.9 m …) and `h` is the box height in
+  pixels. It's an **estimate** (±30 % or worse): a sitting person or a box cut off by the frame
+  edge breaks the assumption. Cut-off boxes are reported as an upper bound (`≤ X m`).
+- **Bearing** comes from the box's horizontal position (`atan((x − W/2)/f)`).
+- **Suggestions** are computed in code from bearing, range and attitude, not invented by the model:
+  - "Yaw right ~15° to bring the person to the center of the frame."
+  - "Advance ~3.9 m to reach a 1.5 m standoff (estimated range 5.4 m, ±30 %)."
+  - "Level the airframe first (roll +24°)." / "Power problem detected — land …"
+
+  The model rephrases them; the UI also shows the raw list.
+- There is no GPS, so absolute position is "unavailable — no validated localization source".
+
+### Safety rules
+
+- The only actuator is the camera tilt servo. Motion requires the operator to **enable servo
+  control** (E key or the button). With control disabled the agent still observes and advises,
+  and reports that it couldn't move the camera.
+- **EMERGENCY STOP** (button or Space) disables servo control and cancels the agent immediately,
+  including an in-flight Qwen request. **Esc** stops just the agent.
+- Model output is never executed; shell/code blocks are stripped from answers.
+- Everything runs on the Pi; no data leaves the local network.
+
+### When Qwen is offline
+
+If llama-server is loading or unreachable, the dashboard keeps working. A **keyword planner**
+(e.g. "look up 20 degrees", "find the person", "track the dog", "scan") and a **rule-based report**
+stand in, clearly labeled *RULE PLAN* / *rule-based*. If Qwen returns unusable JSON, the same
+fallback is used for that task.
+
+## Running Qwen on the Pi 5
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `QWEN_SERVER_URL` | `http://127.0.0.1:8080` | llama-server address (keep it on localhost) |
 | `QWEN_MODEL_ID` | `qwen2.5-3b-instruct-q4_k_m` | label shown in the UI |
-| `QWEN_CTX_SIZE` | 4096 | context length (`-c`); the telemetry context uses ~1–1.5 k tokens |
-| `QWEN_THREADS` | 3 | CPU threads (`-t`); leaves one core for sensors and camera |
-| `QWEN_MAX_TOKENS` | 512 | answer length cap |
+| `QWEN_CTX_SIZE` | 4096 | context length (`-c`); a planning prompt is ~800 tokens |
+| `QWEN_THREADS` | 3 | CPU threads (`-t`); leaves one core for camera and sensors |
 | `QWEN_MANAGE_SERVER` | false | let the backend start/stop llama-server itself |
-| `QWEN_MODEL_PATH` / `QWEN_MMPROJ_PATH` | — | used when the backend manages the server |
-
-**Model choice (start small, measure):**
 
 | Model | Quant | RAM | Notes |
 |---|---|---|---|
-| Qwen2.5-3B-Instruct (`Qwen/Qwen2.5-3B-Instruct-GGUF`) | Q4_K_M ≈ 2 GB | ≈ 3 GB | default; good starting point |
-| Qwen3-4B-Instruct-2507 (community GGUF) | Q4_K_M ≈ 2.5 GB | ≈ 3.5 GB | stronger, slower; non-thinking variant |
-| Qwen2.5-VL-3B-Instruct (`ggml-org/Qwen2.5-VL-3B-Instruct-GGUF`) | Q4_K_M + mmproj | ≈ 4 GB | **vision**: enables snapshot image input |
+| Qwen2.5-3B-Instruct (`Qwen/Qwen2.5-3B-Instruct-GGUF`) | Q4_K_M ≈ 2 GB | ≈ 3 GB | default |
+| Qwen2.5-1.5B-Instruct (`Qwen/Qwen2.5-1.5B-Instruct-GGUF`) | Q4_K_M ≈ 1 GB | ≈ 1.6 GB | about 2× faster — **recommended for live demos** |
+| Qwen3-4B-Instruct-2507 (community GGUF) | Q4_K_M ≈ 2.5 GB | ≈ 3.5 GB | stronger, slower |
 
-Expect low single-digit tokens/s for 3–4 B Q4 models on the Pi 5's four Cortex-A76 cores (CPU
-only), plus several seconds of prompt processing for the ~1.5 k-token context. These are
-estimates; the dashboard measures the real numbers (TTFT, tokens/s, latency) per answer.
-If the camera is streaming 1080p and recording at the same time, expect lower throughput.
-
-Thinking-capable Qwen3 checkpoints get `chat_template_kwargs: {"enable_thinking": false}`, and
-any `<think>` blocks are stripped.
-
-### Setup
+A task makes two Qwen calls: one plan and one report. On the Pi 5's CPU, expect a few
+seconds to tens of seconds per call depending on the model. Skills like `track` run at the
+detector rate without the LLM in the loop, so camera motion stays responsive. The chat shows the
+measured time and tokens/s for every answer. The schema-constrained JSON planning depends on
+llama-server's `response_format` support; use a current llama.cpp build.
 
 ```bash
-scripts/build_llama_cpp.sh                       # LLAMA_CPP_REF=<tag> to pin a release
-scripts/download_qwen.sh                         # or: llama-server -hf Qwen/Qwen2.5-3B-Instruct-GGUF:Q4_K_M
+scripts/build_llama_cpp.sh
+scripts/download_qwen.sh                                      # 3B default
+scripts/download_qwen.sh Qwen/Qwen2.5-1.5B-Instruct-GGUF qwen2.5-1.5b-instruct-q4_k_m.gguf   # faster
 scripts/install_llama_service.sh ~/STRIX-1/models/qwen2.5-3b-instruct-q4_k_m.gguf 3 4096
 ```
 
-The `strix1-llama` unit binds to `127.0.0.1:8080`, runs at nice 5 with `MemoryMax=9G`, and
-restarts on failure. The backend polls `/health` (503 = *loading*) and `/props`. The dashboard
-stays fully usable while the model loads.
+## Object detection ("YOLO stream")
 
-**Vision model:** edit the unit's `ExecStart` to the commented `-hf ggml-org/Qwen2.5-VL-3B-Instruct-GGUF`
-line (or `-m <model> --mmproj <projector>`). The capability is detected automatically.
-
-**Low memory:** with `QWEN_MANAGE_SERVER=true` the backend refuses to start llama-server if
-available RAM is below the model size × 1.25 + 300 MB. With the systemd unit, `MemoryMax`
-protects the rest of the system. The dashboard warns when available memory gets low.
-
-## Grok cloud
-
-| Setting | Default | Meaning |
+| Engine | When | Notes |
 |---|---|---|
-| `GROK_ENABLED` | false | master switch |
-| `XAI_API_KEY` | — | backend-only secret (never returned by any endpoint) |
-| `GROK_MODEL` | `grok-4` | any model id your xAI account can use |
-| `GROK_BASE_URL` | `https://api.x.ai/v1` | OpenAI-compatible endpoint |
-| `GROK_TIMEOUT_S` | 60 | request timeout |
-| `GROK_RATE_LIMIT_PER_MIN` / `GROK_DAILY_REQUEST_LIMIT` | 4 / 200 | local rate limits |
-| `GROK_VISION` | auto | `auto` asks `GET /v1/language-models/{model}` for `input_modalities` |
-| `GROK_PRICE_INPUT_PER_MTOK` / `…OUTPUT…` | unset | USD per 1 M tokens for the cost estimate |
+| ONNX **YOLOX-S** | default from `scripts/get_detector_model.sh` | OpenCV Zoo, Apache-2.0, COCO-80; verified in development (person 0.93 on a test photo). Expect a few FPS on the Pi 5. |
+| ONNX **YOLO11n / YOLOv8** | `scripts/get_detector_model.sh --yolo11n` | ~4× lighter, so faster; exported with Ultralytics (AGPL-3.0). Its decoder is unit-tested against the documented output format, but no exported model was run in development. |
+| OpenCV **HOG** | no model installed | person only, fallback |
+| **Synthetic** | demo mode | ground-truth boxes from the synthetic camera, labeled SYNTHETIC |
 
-xAI model names change over time. Use any id listed in the xAI console. Costs are approximate:
-they combine the `usage` returned by the API with the prices you configure. If usage isn't
-returned, completion tokens are estimated (≈ chars/4) and marked *est.*
+Inference uses onnxruntime (2 threads) when installed, otherwise OpenCV DNN.
+**Prompts** (left panel) choose which classes are drawn on the video; the agent can still see
+every class. Only COCO-80 class names are accepted (e.g. `person, car, dog, chair, bottle`). This is
+a closed-vocabulary detector, not open-vocabulary.
 
-**Privacy and consent:** a request reaches xAI only if all of these hold:
+## Example tasks
 
-1. you selected *Grok Cloud* mode, or clicked *Deep analysis (Grok)* in Hybrid mode
-2. you confirmed the dialog that lists exactly what will be sent
-3. the request carries `external_consent=true`. The backend returns 403 without it, so a
-   buggy client cannot bypass the dialog.
-
-Telemetry sharing can be switched off per request. Live video and location are never sent,
-and nothing is uploaded automatically or periodically.
-
-**Failure handling:** timeouts, connection errors, 401/403 (bad key), 404 (bad model),
-429 (quota) and 5xx are reported in the chat with a clear message. Sensor acquisition runs in
-separate threads and is unaffected.
-
-## Hybrid mode
-
-- Routine questions → local Qwen.
-- *Deep analysis (Grok)* → Grok, with consent and telemetry (plus the snapshot, if attached and the model supports vision).
-- Each answer is labeled with the model that produced it (LOCAL / CLOUD badge, model label,
-  latency, tokens/s, cost).
-
-## Example questions
-
-- "What is the current pitch and roll?"
-- "Summarize the last 60 seconds of sensor readings."
-- "Has the temperature changed?"
-- "What does the camera currently show?" (runs a fresh on-device OpenCV analysis if the last one is older than 30 s)
-- "Is the IMU behaving abnormally?" (uses the deterministic health checks)
-- "Summarize the latest recorded observations."
+- "Find the person and keep them centered" → `find` + `track`; the report gives distance, yaw and advance suggestions.
+- "How far away is the person and how should I move?" → no camera motion; range + suggestions.
+- "Scan the area and tell me what you see" → `scan` sweep and summary.
+- "Look up 15 degrees" / "center the camera".
+- "Is the IMU behaving normally?" → uses the deterministic IMU health checks.
+- "What are the temperature and humidity?"

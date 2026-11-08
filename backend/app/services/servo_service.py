@@ -328,6 +328,32 @@ class ServoService:
     def center(self) -> dict[str, Any]:
         return self.set_target(self.center_angle)
 
+    @property
+    def up_sign(self) -> float:
+        """+1 if a larger servo angle tilts the camera up."""
+        return 1.0 if self.settings.servo_up_is_positive else -1.0
+
+    def tilt_deg(self) -> float | None:
+        """Commanded camera tilt relative to center (+ = up)."""
+        if self.current is None:
+            return None
+        return (self.current - self.center_angle) * self.up_sign
+
+    def nudge(self, up_deg: float) -> dict[str, Any]:
+        """Tilt the camera by ``up_deg`` (+ = up) relative to the current target."""
+        base = self.target if self.target is not None else (self.current if self.current is not None else self.center_angle)
+        return self.set_target(base + up_deg * self.up_sign)
+
+    def tilt_to(self, tilt_up_deg: float) -> dict[str, Any]:
+        """Absolute camera tilt relative to center (+ = up)."""
+        return self.set_target(self.center_angle + tilt_up_deg * self.up_sign)
+
+    def set_speed(self, max_speed_dps: float) -> dict[str, Any]:
+        return self.update_limits(self.min_angle, self.max_angle, max_speed_dps, self.center_angle)
+
+    def at_target(self, tol: float = 0.5) -> bool:
+        return self.target is None or self.current is None or abs(self.target - self.current) <= tol
+
     def _write(self, angle: float) -> None:
         assert self._backend is not None
         pulse = angle_to_pulse_us(angle, self.settings.servo_min_pulse_us, self.settings.servo_max_pulse_us)
@@ -380,4 +406,6 @@ class ServoService:
             "pulse_range_us": [self.settings.servo_min_pulse_us, self.settings.servo_max_pulse_us],
             "gpio": self.settings.servo_gpio,
             "position_feedback": False,
+            "tilt_deg": self.tilt_deg(),
+            "up_is_positive": self.settings.servo_up_is_positive,
         }

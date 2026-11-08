@@ -31,11 +31,14 @@ you validate.
 | WebRTC via MediaMTX | ✗ | experimental path end to end | |
 | System monitor (psutil, thermal zone) | ✅ (x86) | Pi thermal zone name | |
 | `vcgencmd get_throttled` / `pmic_read_adc` parsing | ✅ unit tests with documented output format | output format on your firmware | |
-| OpenCV scene analysis (heuristics, HOG people) | ✅ synthetic frames | usefulness on real aerial imagery | |
+| YOLOX-S ONNX detector | ✅ real model on a real photo (person 0.93; onnxruntime + OpenCV DNN) | FPS on the Pi 5 CPU | |
+| YOLO11n/YOLOv8 ONNX path | decoder unit-tested on synthetic tensors only | export with `--yolo11n`, accuracy + FPS | |
+| Distance / bearing estimates | ✅ geometry tests; synthetic scene | compare with a tape measure at 2/4/8 m | |
+| Qwen agent: plan → servo skills → report | ✅ simulated llama-server (JSON schema), keyword planner, tracking in the synthetic scene | plan quality and latency with the real model | |
+| Keyboard servo control, e-stop | ✅ browser test | real servo direction (`STRIX_SERVO_UP_IS_POSITIVE`) | |
 | Monocular VO | ✅ rendered 3D scene recovers direction | real camera (lens distortion, motion blur) | |
 | Recording, playback, CSV/JSON export, retention | ✅ tests + browser | SD-card write load over long sessions | |
 | Local Qwen via llama-server | ✅ protocol against a simulated server (SSE, timings, /health 503, /props) | build, load time, tokens/s, memory | |
-| Grok proxy (consent, rate limits, errors, cost) | ✅ simulated xAI endpoint | real API key, current model ids, `input_modalities` | |
 | systemd units | ✗ | `install_pi.sh --systemd`, autostart after reboot | |
 | Installer | syntax-checked only | full run on a fresh Raspberry Pi OS image | |
 
@@ -51,8 +54,8 @@ you validate.
 6. Dashboard: stream at 1080p30, note browser FPS + latency; start a recording, confirm the
    stream continues and the MP4 plays; repeat while Qwen is answering.
 7. `scripts/verify_servo.py` with external 5 V; then set safe limits in Settings.
-8. Qwen: `curl 127.0.0.1:8080/health`, ask the six example questions, note tokens/s.
-9. Grok (optional): one consented request; confirm the cost/usage display.
+8. Qwen: `curl 127.0.0.1:8080/health`, then run the judge demo tasks; note plan/report time.
+9. Detector: stand at a measured 3 m and 6 m; compare the `~X m` labels (expect ±30 %).
 10. Pull the IMU connector while running → *disconnected* within ~1 s, other panels keep
     working; reconnect → recovers within ~5 s.
 11. Turn Wi-Fi off/on on the laptop → banner, then automatic recovery.

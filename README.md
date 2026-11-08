@@ -1,34 +1,49 @@
-# STRIX-1 — Raspberry Pi 5 AI Drone Ground Station
+# STRIX-1 — AI camera operator for a Raspberry Pi 5 drone
 
-STRIX-1 is an **observation, diagnostics and research** platform for a 250 mm FPV quadcopter
-(SpeedyFPV ZMR250). A Raspberry Pi 5 (16 GB) on the airframe reads its sensors, streams the
-Camera Module 3 Wide, runs local AI inference and serves a browser dashboard. You open it on
-your laptop over Wi-Fi — no VNC, no monitor.
+STRIX-1 turns a **Raspberry Pi 5** on a 250 mm FPV quadcopter (SpeedyFPV ZMR250) into an AI camera
+operator. A **local Qwen model** sees through **YOLO**, reads the **MPU6050** (motion) and **DHT11**
+(temperature/humidity), **aims the camera with a servo**, **estimates distances** to what it sees
+and **suggests how to move** to complete a task. You watch and talk to it from any browser on the
+same Wi-Fi; no VNC or monitor needed.
 
-> **Scope and safety.** STRIX-1 does **not** implement flight control, motor commands, navigation
-> setpoints, target tracking or any automatic movement of the aircraft. The only actuator it
-> drives is the one-axis **camera tilt servo**, which starts disarmed and is limited and rate-limited.
-> It never talks to or reconfigures a flight controller.
+> **Judges:** start with **[docs/JUDGES.md](docs/JUDGES.md)** for a 3-minute demo script.
 
-![dashboard](docs/img/dashboard.png)
+![console](docs/img/dashboard.png)
 
-## Features
+> **Safety scope.** The AI controls **only the one-axis camera tilt servo**, and only after the
+> operator enables it (E key), within safe limits and a slew rate. EMERGENCY STOP (Space) disables
+> it instantly. STRIX-1 never sends motor, flight-controller or navigation commands. Movement
+> advice is for the human pilot.
 
-| Area | What you get |
+## How it works
+
+```
+                 ┌──────────────── Raspberry Pi 5 ────────────────────────────────────────┐
+ Camera Module 3 ─▶ Picamera2 ─┬─▶ MJPEG stream ─────────────────────────────────────────┐ │
+                               └─▶ YOLO (ONNX) ─▶ objects + distance + bearing ─┐       │ │
+ MPU6050 ─▶ complementary filter ─▶ roll / pitch / yaw ──────────────────────────┤       │ │
+ DHT11   ─▶ kernel IIO driver ────▶ temperature / humidity ──────────────────────┤       │ │
+                                                                                  ▼       │ │
+          Qwen (llama.cpp, local)  GENERATOR ─plan─▶ OBSERVER → PILOT → UNTIL ─▶ REPORT  │ │
+                                                       │ (camera servo only)              │ │
+ SG90 tilt servo ◀──────── ServoService (limits, slew, enable, e-stop) ◀──────┘          │ │
+                 └────────────────────── FastAPI :8000 (REST + WebSocket) ───────────────┘─┘
+                                                │ Wi-Fi
+                                   Browser console (laptop / phone)
+```
+
+| Feature | Details |
 |---|---|
-| **Live camera** | Low-latency MJPEG stream (fetch-based reader that always shows the newest frame). Shows browser FPS, camera FPS, measured **glass-to-browser latency** (sensor timestamps + clock sync) and bitrate. Also: snapshots, H.264/MP4 recording, fullscreen, resolution/FPS selection limited to modes the sensor supports, AI detection overlay, and optional WebRTC via MediaMTX. |
-| **IMU (MPU6050)** | 100 Hz burst-read acquisition, complementary filter for roll/pitch, relative yaw, scrolling accel/gyro charts, calibration (gyro bias + level reference), health checks (stale data, low rate, saturation, stuck sensor, bias, implausible \|a\|). The UI states clearly that yaw is relative and drifts (no magnetometer). |
-| **3D orientation** | React Three Fiber model of a 250 mm quad, attitude indicator, horizon grid, orbit/zoom, reset view, zero yaw, recalibrate, camera-tilt visualization. |
-| **Environment (DHT11)** | Temperature (°C/°F), humidity, history chart, session min/max, failure and stale-data warnings; reads every 3 s. |
-| **Camera servo (SG90)** | Enable/disable control, slider, center, ±5° nudges, safe limits, 60 °/s slew limit. Angles are labeled *commanded* because the SG90 has no position feedback. |
-| **Map / environment** | **A** orientation at a fixed origin · **B** OpenCV visual observations (vegetation, sky, structures, paths, people), image-relative only · **C** experimental monocular visual odometry with tracking quality and drift indicators. Without a validated localization source the map always shows *"Position unavailable — no validated localization source."* |
-| **AI assistant** | Local **Qwen** via llama.cpp, optional **Grok** (xAI) through a backend proxy, and **Hybrid** mode. Answers are grounded in timestamped telemetry and tagged `[MEASURED]` / `[INTERPRETATION]` / `[UNAVAILABLE]`. Anything sent to the cloud requires explicit consent. Shell commands are filtered out of model output. If no model is available, a deterministic telemetry digest answers instead. |
-| **System health** | CPU/RAM/temperature, throttling and under-voltage (`vcgencmd`), Pi 5 PMIC 5 V input, Wi-Fi signal, link RTT, AI tokens/s. **Battery % is shown as unavailable**: the power bank reports no telemetry, so it is never estimated. |
-| **Recording** | SQLite telemetry sessions (10 Hz), playback with a timeline, CSV/JSON export, retention, plus video and snapshot library and event/log viewer. |
-| **Access** | One port (`:8000`), token login → HttpOnly session cookie, private-network-only guard, WebSocket auto-reconnect with connection-loss banner. |
-| **Demo mode** | `STRIX_MOCK=true` gives realistic, **clearly labeled synthetic** data for every device. Synthetic data is never substituted for real measurements: a missing device shows *disconnected*. |
+| **Qwen agent** | Plans with schema-constrained JSON (always valid, even for a 1.5–3 B model), then runs camera skills: `look`, `tilt`, `center`, `scan`, `find`, `track`, `wait`. It reports with `[MEASURED]` / `[DETECTED]` / `SUGGEST:` tags. If Qwen is offline, a labeled keyword planner and rule-based report stand in. → [docs/AI.md](docs/AI.md) |
+| **YOLO stream** | ONNX detector (YOLOX-S by default, YOLO11n/YOLOv8 supported) running continuously. Green boxes on the video show `person 0.88 · ~5.4 m`. Prompts choose the classes (COCO-80). |
+| **Distance & direction** | Pinhole model with typical object heights (HFOV 102°), labeled as estimates (±30 %). Bearing comes from image position; the radar shows a top-down view. |
+| **Suggestions** | Computed from geometry and sensors, e.g. "Yaw right ~15°", "Advance ~3.9 m to a 1.5 m standoff", "Level the airframe first". |
+| **Sensors** | MPU6050 at 100 Hz with a complementary filter (roll/pitch, *relative* yaw: no magnetometer), calibration and health checks. DHT11 through the Pi 5 kernel driver. |
+| **Manual control** | Keyboard: E enable, W/S or ↑/↓ tilt, C center, Space emergency stop, Esc stop agent. Speed and step sliders. |
+| **Console UI** | One screen: controls · live video · agent graph / radar / sensor data / 3D attitude · chat. Secondary views: recordings (SQLite sessions, playback, CSV/JSON), system health, calibration. |
+| **Demo mode** | `STRIX_MOCK=true` gives a synthetic camera scene, IMU and DHT with ground-truth detections, all labeled **SYNTHETIC**. A missing real device shows *disconnected*, never fake data. |
 
-## Quick start (no hardware, any Linux/macOS laptop)
+## Quick start (no hardware, any laptop)
 
 ```bash
 git clone https://github.com/Nesi56/STRIX-1.git && cd STRIX-1
@@ -36,27 +51,26 @@ cd frontend && npm ci && npm run build && cd ..        # Node ≥ 20.19
 scripts/run_mock.sh                                     # prints the access token
 ```
 
-Open <http://localhost:8000> and enter the printed token. Everything runs on synthetic data
-marked **SYNTHETIC** in the UI.
+Open <http://localhost:8000>, sign in with the token, press **E**, then ask the chat:
+*"Find the person and keep them centered"*.
 
-For development with hot reload, run `scripts/run_dev.sh` (backend on :8000, Vite on :5173).
+## On the Raspberry Pi 5
 
-## Installing on the Raspberry Pi 5
-
-Full guide: **[docs/SETUP_PI.md](docs/SETUP_PI.md)** (OS image, I2C, overlays, camera checks, Qwen, Grok, systemd).
-Wiring: **[docs/HARDWARE.md](docs/HARDWARE.md)**.
+Full guide: **[docs/SETUP_PI.md](docs/SETUP_PI.md)** · wiring: **[docs/HARDWARE.md](docs/HARDWARE.md)**.
 
 ```bash
 git clone https://github.com/Nesi56/STRIX-1.git ~/STRIX-1 && cd ~/STRIX-1
 scripts/install_pi.sh                                    # packages, venv, .env + token, dashboard build
-scripts/install_pi.sh --configure-boot --groups          # optional: I2C + DHT11 overlay + groups (backs up config.txt)
-sudo reboot
+scripts/install_pi.sh --skip-apt --skip-frontend --configure-boot --groups && sudo reboot
+scripts/get_detector_model.sh                            # YOLOX-S detector (checksum-verified)
+scripts/build_llama_cpp.sh && scripts/download_qwen.sh   # local Qwen
+scripts/install_llama_service.sh ~/STRIX-1/models/qwen2.5-3b-instruct-q4_k_m.gguf 3 4096
 scripts/verify_all.sh                                    # IMU, DHT11, camera, power checks
-scripts/install_pi.sh --skip-apt --skip-frontend --systemd   # autostart on boot
+scripts/install_pi.sh --skip-apt --skip-frontend --systemd   # autostart
 ```
 
-Then browse from your laptop on the same Wi-Fi to **`http://<hostname>.local:8000`**
-(for example `http://raspberrypi.local:8000`) or `http://<pi-ip>:8000`.
+Then browse to **`http://<hostname>.local:8000`** from your laptop. Everything also works over SSH;
+see SETUP_PI.md.
 
 ## Wiring summary (BCM numbering in code)
 
@@ -68,93 +82,61 @@ Then browse from your laptop on the same Wi-Fi to **`http://<hostname>.local:800
 | SG90 | +5 V / GND | **external regulated 5 V** / common ground | — |
 | Camera Module 3 Wide | CSI ribbon | CAM/DISP connector | — |
 
-Never power the servo from a GPIO pin. Check the actual 52Pi PD board revision and its
-regulated 5 V output rating before taking servo power from it (see docs/HARDWARE.md).
-
-## Architecture
-
-```
- Raspberry Pi 5 ─────────────────────────────────────────────────────────────────────────
-  threads (blocking I/O)                asyncio (FastAPI / uvicorn)                 browser
-  ┌─────────────────────┐   latest +    ┌──────────────────────────┐  /ws/telemetry ┌──────────┐
-  │ imu_service  100 Hz ├──ring buffer──▶ telemetry_service 20 Hz  ├───────────────▶│ React UI │
-  │ dht_service   0.3 Hz│               │  (bounded per-client Q)  │                │  R3F 3D  │
-  │ servo_service 50 Hz │◀─commands─────┤ api.py (REST, validated) │◀──── REST ─────┤  charts  │
-  │ system_monitor 0.5Hz│               │ recording_service→SQLite │                │  AI dock │
-  │ camera (Picamera2   │──JPEG hub────▶│ /api/camera/stream.mjpg  ├── MJPEG ──────▶│          │
-  │  encoder threads)   │──lores frame─▶│ mapping_service (OpenCV) │                └──────────┘
-  └─────────────────────┘               │ ai_service → Qwen (llama-server :8080, local)        │
-                                        │            → Grok (api.x.ai, explicit consent only)  │
-                                        └──────────────────────────┘
-```
-
-Sensors, camera, recording and AI run independently. A failed camera, a loading LLM or a
-cloud outage never stops sensor acquisition. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Never power the servo from a GPIO pin. Check the 52Pi PD board's 5 V rating before powering the servo from it.
 
 ## Project structure
 
 ```
-backend/           FastAPI app (Python 3.11+)
-  app/api/         api.py (REST), websocket.py, auth.py, network_guard.py
-  app/services/    camera_service, imu_service, dht_service, servo_service, telemetry_service,
-                   mapping_service (+ vision.py), ai_qwen_service, ai_grok_service, ai_service,
-                   ai_context, recording_service, system_monitor, container
-  app/core/        orientation filter, rate limiting, output safety, logging
-  app/database/    SQLite layer        app/models/  request schemas    app/config/  settings
-  tests/           pytest suite (mock mode)
-frontend/          React 19 + TypeScript + Vite + Tailwind 4 + React Three Fiber + Recharts + Lucide
-scripts/           install, run, verification, llama.cpp/Qwen helpers
-config/            systemd units, config.txt overlay block, MediaMTX config
-docs/              setup, hardware, AI, streaming, API, troubleshooting, verification matrix
+backend/app/services/  agent_service (Qwen agent) · ai_context (grounding, suggestions, prompts) · ai_qwen_service
+                       detector_service + detector (YOLO/YOLOX/HOG, distance) · camera_service · imu_service
+                       dht_service · servo_service · telemetry_service · recording_service · system_monitor
+                       mapping_service (localization status, experimental VO) · container
+backend/app/api/       api.py (REST) · websocket.py · auth.py · network_guard.py
+backend/tests/         pytest suite (demo mode, simulated llama-server)
+frontend/src/          console UI: components/console/* (TopBar, ManualControls, PromptsPanel, VideoFeed,
+                       AgentGraph, RadarView, SensorData, ChatPanel), React Three Fiber 3D, Recharts
+scripts/               install, run, verification, detector model, llama.cpp/Qwen helpers
+config/ docs/          systemd units, boot overlay block · setup, hardware, AI, API, judge guide
 ```
 
 ## Testing
 
 ```bash
-scripts/run_tests.sh      # backend pytest (104 tests) + frontend typecheck, vitest, production build
+scripts/run_tests.sh      # backend pytest + frontend typecheck, vitest, production build
 ```
 
-The automated tests cover:
-- sensor data parsing (MPU6050 burst, IIO DHT11, `vcgencmd`, PMIC, `/proc/net/wireless`, `.env`)
-- orientation estimation and calibration
-- mock telemetry consistency
-- WebSocket protocol and authentication
-- REST validation and errors
-- recording, playback, export and retention
-- AI grounding, consent, error handling, rate limits and output filtering (using simulated llama-server and xAI endpoints)
-- servo limits and slew rate
-- vision and VO
-- the MJPEG multipart parser and clock sync
+The tests cover:
+- agent planning, validation, servo skills, tracking, emergency stop and the offline fallback (simulated llama-server)
+- YOLOv8/YOLOX decoding, NMS, distance geometry and prompts
+- sensor parsing, orientation filter, calibration and servo limits
+- auth, WebSocket and REST validation
+- recording/export, the MJPEG parser and clock sync
 
 ## Verified vs. unverified
 
-This repository was developed and tested **without the physical hardware** (x86-64 Linux, mock
-mode). Hardware code paths were written against the actual library sources (Picamera2 0.3.39,
-Adafruit MPU6050 1.3.9, Adafruit DHT 4.0.12, Blinka 10.1, gpiozero 2.0, llama.cpp server API).
-They still **must be validated on the Pi**. See **[docs/HARDWARE_VERIFICATION.md](docs/HARDWARE_VERIFICATION.md)**
-for the full matrix and step-by-step checks. Highlights:
+Built and tested without the physical drone (x86-64 Linux, demo mode, headless browser). Verified:
+- the full console
+- the agent (keyword planner, plus Qwen protocol against a simulated llama-server)
+- tracking in the synthetic scene
+- **the YOLOX-S model on a real photo** (person 0.93)
+- auth and recording
 
-- ✅ Verified here: full dashboard and API in mock mode, WebSocket reconnect, recording/export,
-  AI routing/consent/fallbacks (simulated servers), OpenCV analysis, VO on rendered scenes, auth.
-- ⚠️ Needs Pi validation:
-  - real MPU6050/DHT11/SG90 I/O
-  - Picamera2 streaming, recording and achieved FPS. 1080p60 is **not** offered: the IMX708's 2304×1296 mode tops out near 56 fps.
-  - CPU budget with software H.264 (the Pi 5 has no hardware video encoder)
-  - llama.cpp throughput, `vcgencmd`/PMIC parsing on your firmware
-  - the 52Pi board's servo power capacity
-  - the optional WebRTC path
+**Needs validation on the Pi** ([docs/HARDWARE_VERIFICATION.md](docs/HARDWARE_VERIFICATION.md)):
+- real sensor/servo/camera I/O
+- detector FPS on the Pi 5 CPU
+- Qwen speed and plan quality
+- the YOLO11n export path
+- the servo tilt direction (`STRIX_SERVO_UP_IS_POSITIVE`)
+- the 52Pi board's servo power capacity
 
 ## Documentation
 
-- [docs/SETUP_PI.md](docs/SETUP_PI.md) — Raspberry Pi OS setup, install, systemd, LAN access
-- [docs/HARDWARE.md](docs/HARDWARE.md) — wiring, power, overlays, hardware PWM
-- [docs/AI.md](docs/AI.md) — Qwen/llama.cpp, Grok, hybrid mode, grounding, privacy
-- [docs/STREAMING.md](docs/STREAMING.md) — MJPEG vs WebRTC, latency measurement, CPU budget
-- [docs/API.md](docs/API.md) — REST endpoints and WebSocket protocol
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — modules, threading, safety design
-- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
-- [docs/HARDWARE_VERIFICATION.md](docs/HARDWARE_VERIFICATION.md)
+[JUDGES](docs/JUDGES.md) · [SETUP_PI](docs/SETUP_PI.md) · [HARDWARE](docs/HARDWARE.md) · [AI](docs/AI.md) ·
+[STREAMING](docs/STREAMING.md) · [API](docs/API.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) ·
+[TROUBLESHOOTING](docs/TROUBLESHOOTING.md) · [HARDWARE_VERIFICATION](docs/HARDWARE_VERIFICATION.md)
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Optional models have their own licenses: YOLOX-S (Apache-2.0),
+Ultralytics YOLO11 (AGPL-3.0), Qwen2.5-1.5B (Apache-2.0), Qwen2.5-3B (Qwen Research License — check its terms
+for your use). Always confirm on the model card.

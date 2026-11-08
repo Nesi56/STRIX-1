@@ -6,8 +6,8 @@ authentication: either the session cookie from `POST /api/auth/login`, or
 (authenticated). Timestamps are UNIX seconds (server clock).
 
 Errors use one shape: `{"error": {"code": "...", "message": "...", "details": [...]?}}`, with status
-`401` unauthenticated, `403` forbidden/consent required/non-local network, `404`,
-`409` state conflict (e.g. servo disabled, already recording), `422` validation, `503` device unavailable.
+`401` unauthenticated, `403` forbidden/non-local network, `404`,
+`409` state conflict (e.g. servo disabled, agent busy, already recording), `422` validation, `503` device unavailable.
 
 ## REST endpoints
 
@@ -44,15 +44,20 @@ Errors use one shape: `{"error": {"code": "...", "message": "...", "details": [.
 | POST | `/api/servo/angle` | `{angle: 0–180}` | Set target (clamped to safe limits, slew limited); 409 if disarmed |
 | POST | `/api/servo/center` | — | Move to the center angle |
 | POST | `/api/servo/limits` | `{min_angle, max_angle, max_speed_dps, center_angle?}` | Update and persist safe limits |
-| GET | `/api/ai/models` | — | Modes and provider status (Qwen/Grok) |
-| POST | `/api/ai/chat` | `ChatRequest` (below) | Streaming NDJSON answer |
-| GET / DELETE | `/api/ai/history` | `limit` | Chat history / clear |
-| GET | `/api/ai/usage` | — | Token/cost/latency totals per provider |
+| POST | `/api/servo/nudge` | `{up_deg: −90…90}` | Tilt relative to the current target (+ = up) |
+| POST | `/api/servo/speed` | `{max_speed_dps}` | Change the slew-rate limit |
+| POST | `/api/estop` | — | **Emergency stop**: disable servo control and cancel the agent |
+| POST | `/api/session/reset` | — | Cancel the agent, clear chat, zero yaw, reset environment min/max |
+| GET | `/api/detector` | — | Detector engine, FPS, inference time, prompts, latest detections |
+| GET | `/api/detector/classes` | — | Classes the active detector knows (COCO-80, or `person` for HOG) |
+| POST | `/api/detector/prompts` | `{prompts: [..]}` | Classes drawn on the video (422 if unknown) |
+| GET | `/api/ai/status` | — | Qwen / llama-server status |
+| POST | `/api/agent/run` | `{task}` | Run a Qwen agent task — streaming NDJSON (below); 409 if busy |
+| POST | `/api/agent/stop` | — | Cancel the running task |
+| GET | `/api/agent` | — | Agent state (status, active node, plan) |
+| GET / DELETE | `/api/agent/history` | `limit` | Chat history / clear |
 | POST | `/api/ai/qwen/{start\|stop\|restart}` | — | Control llama-server when `QWEN_MANAGE_SERVER=true` |
-| GET | `/api/mapping` | — | Position status, localization sources, VO state, vision status |
-| POST | `/api/mapping/analyze` | `{snapshot_id?}` | Run OpenCV scene analysis now |
-| GET | `/api/mapping/observations` | `limit` | Observation log |
-| POST | `/api/mapping/auto` | `{interval_s}` | Automatic analysis interval (0 = off) |
+| GET | `/api/mapping` | — | Position status (unavailable), localization sources, VO state |
 | POST | `/api/mapping/vo` · `/vo/reset` | `{enabled}` | Start/stop/reset experimental visual odometry |
 | GET | `/api/recordings` | — | Sessions, videos, snapshots, recorder status |
 | GET | `/api/recordings/status` | — | Active session info |
@@ -62,31 +67,27 @@ Errors use one shape: `{"error": {"code": "...", "message": "...", "details": [.
 | GET | `/api/recordings/{id}/telemetry` | `start`, `end`, `max_points` | Downsampled rows + events for playback |
 | GET | `/api/recordings/{id}/export.csv` · `export.json` | — | Streaming download |
 
-### `POST /api/ai/chat`
+### `POST /api/agent/run`
 
 ```json
-{
-  "message": "Is the IMU behaving abnormally?",
-  "mode": "local | grok | hybrid",
-  "deep_analysis": false,
-  "external_consent": false,
-  "include_telemetry": true,
-  "snapshot_id": null,
-  "history_turns": 4
-}
+{ "task": "Find the person and keep them centered" }
 ```
 
-A Grok route (`mode=grok`, or `hybrid` + `deep_analysis`) without `external_consent=true` → `403 consent_required`.
 The response is `application/x-ndjson`, one event per line:
 
 | `type` | Fields |
 |---|---|
-| `meta` | `provider`, `model`, `label`, `local`, `external`, `telemetry_shared`, `image_sent`, `notes`, `synthetic_sources` |
-| `delta` | `text` (sanitized incremental text) |
-| `replace` | `text` (full text, when sanitization changed already-streamed content) |
-| `error` | `code` (`not_ready`, `timeout`, `auth`, `rate_limited`, …), `message`, `provider` |
-| `fallback` | `provider: "strix-digest"`, `label`, `text` (deterministic digest when the local model is unavailable) |
-| `done` | `stats` (`latency_ms`, `ttft_ms`, `tokens_per_s`, `prompt_tokens`, `completion_tokens`, `cost_usd`), `sanitized` |
+| `run` | `run_id`, `task` |
+| `node` | `node`: `generator` · `observer` · `pilot` · `until` · `report` (drives the agent graph) |
+| `plan` | `planner` (`qwen` or `rules`), `thought`, `target`, `steps[]` (`skill`, args, `text`, `status`), `stats` |
+| `step` | `index`, `status` (`running` · `done` · `failed` · `skipped`), `text` (result) |
+| `progress` | `text` (e.g. scan progress per tilt angle) |
+| `observation` | `text` (objects seen before a step) |
+| `suggestions` | `items[]` — deterministic movement advice for the pilot |
+| `delta` / `replace` | report text (sanitized) |
+| `error` | `code`, `message` (e.g. Qwen report failed → rule-based report follows) |
+| `done` | `planner`, `reporter`, `stats` (`latency_ms`, `tokens_per_s`, …), `total_ms` |
+| `stopped` | `reason` (e.g. `EMERGENCY STOP`) |
 
 ## WebSocket `/ws/telemetry`
 
@@ -96,9 +97,11 @@ Authentication: session cookie (browsers) or `?token=<STRIX_AUTH_TOKEN>` (script
 Server → client (JSON text frames):
 
 - `{"type":"hello","server_time","version","telemetry_hz","demo_mode","snapshot":{…full state…}}`
-- `{"type":"telemetry","ts","seq","demo_mode","imu":{"status","latest"}}` at `STRIX_TELEMETRY_HZ` (20 Hz).
+- `{"type":"telemetry","ts","seq","demo_mode","imu":{"status","latest"},"agent":{…}}` at `STRIX_TELEMETRY_HZ` (20 Hz),
+  plus `"detections"` whenever the detector has a new result (`detections[]` with `label`, `confidence`,
+  normalized `bbox`, `distance_m`, `distance_kind`, `bearing_deg`, `elevation_deg`).
   Once per second the message also has `"full": true` plus `imu_health`, `imu_calibration`,
-  `environment`, `servo`, `camera`, `system`, `ai`, `mapping`, `recording`.
+  `environment`, `servo`, `camera`, `system`, `ai`, `detector`, `mapping`, `recording`.
 - `{"type":"event","event":{"ts","level","source","message"}}`
 - `{"type":"pong","client_ts","server_ts"}` (milliseconds) in reply to a ping.
 

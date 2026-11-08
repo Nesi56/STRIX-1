@@ -17,20 +17,24 @@ from app.api.auth import COOKIE_NAME, AuthManager
 from app.core.logging_setup import ring_handler
 from app.core.orientation import CalibrationError
 from app.models.schemas import (
-    AnalyzeRequest,
-    AutoAnalysisRequest,
+    AgentRunRequest,
     CalibrationRequest,
     CameraConfigRequest,
-    ChatRequest,
     LoginRequest,
+    PromptsRequest,
     RecordingStartRequest,
     RecordingUpdateRequest,
     ServoAngleRequest,
     ServoLimitsRequest,
+    ServoNudgeRequest,
+    ServoSpeedRequest,
     VORequest,
 )
+from app.services.agent_service import AgentBusy
 from app.services.camera_service import CameraError, list_media, safe_media_path
 from app.services.container import Container
+from app.services.detector import COCO80
+from app.services.detector_service import DetectorError
 from app.services.recording_service import RecordingError
 from app.services.servo_service import ServoError
 
@@ -109,15 +113,18 @@ async def config(request: Request) -> dict[str, Any]:
                 "accel_range_g": s.imu_accel_range_g, "gyro_range_dps": s.imu_gyro_range_dps, "dlpf_hz": s.imu_dlpf_hz,
                 "filter_alpha": s.imu_filter_alpha, "axis_map": s.imu_axis_map},
         "dht": {"backend": s.dht_backend, "gpio": s.dht_gpio, "interval_s": s.dht_interval_s},
-        "servo": {"backend": s.servo_backend, "gpio": s.servo_gpio, "pulse_us": [s.servo_min_pulse_us, s.servo_max_pulse_us]},
+        "servo": {"backend": s.servo_backend, "gpio": s.servo_gpio, "pulse_us": [s.servo_min_pulse_us, s.servo_max_pulse_us],
+                  "up_is_positive": s.servo_up_is_positive},
         "camera": {"backend": s.camera_backend, "width": s.camera_width, "height": s.camera_height, "fps": s.camera_fps,
                    "jpeg_quality": s.camera_jpeg_quality, "webrtc_enabled": s.webrtc_enabled},
         "recording": {"sample_hz": s.recording_sample_hz, "retention_days": s.recording_retention_days,
                       "max_db_mb": s.recording_max_db_mb},
         "qwen": {"enabled": s.qwen_enabled, "server_url": s.qwen_server_url, "manage_server": s.qwen_manage_server,
                  "model_id": s.qwen_model_id, "ctx_size": s.qwen_ctx_size, "threads": s.qwen_threads},
-        "grok": {"enabled": s.grok_enabled, "model": s.grok_model, "configured": bool(s.xai_api_key),
-                 "rate_limit_per_min": s.grok_rate_limit_per_min, "daily_limit": s.grok_daily_request_limit},
+        "detector": {"backend": s.detector_backend, "model": s.detector_model or "auto (models/*.onnx)",
+                     "conf": s.detector_conf, "hz": s.detector_hz, "hfov_deg": s.camera_hfov_deg},
+        "agent": {"max_plan_steps": s.agent_max_plan_steps, "skill_timeout_s": s.agent_skill_timeout_s,
+                  "standoff_m": s.agent_standoff_m},
         "gpio_pins_bcm": {"i2c_sda": 2, "i2c_scl": 3, "dht11_data": s.dht_gpio, "servo_signal": s.servo_gpio},
     }
 
@@ -382,58 +389,116 @@ async def servo_disarm(request: Request) -> dict[str, Any]:
     return _servo_call(get_container(request).servo.disarm)
 
 
+@router.post("/servo/nudge")
+async def servo_nudge(body: ServoNudgeRequest, request: Request) -> dict[str, Any]:
+    return _servo_call(get_container(request).servo.nudge, body.up_deg)
+
+
+@router.post("/servo/speed")
+async def servo_speed(body: ServoSpeedRequest, request: Request) -> dict[str, Any]:
+    return _servo_call(get_container(request).servo.set_speed, body.max_speed_dps)
+
+
 @router.post("/servo/limits")
 async def servo_limits(body: ServoLimitsRequest, request: Request) -> dict[str, Any]:
     return _servo_call(get_container(request).servo.update_limits, body.min_angle, body.max_angle, body.max_speed_dps,
                        body.center_angle)
 
 
-# ================================================================== AI
-@router.get("/ai/models")
-async def ai_models(request: Request) -> dict[str, Any]:
-    return get_container(request).ai.models()
-
-
-@router.post("/ai/chat")
-async def ai_chat(body: ChatRequest, request: Request):
+# ============================================================ safety
+@router.post("/estop")
+async def emergency_stop(request: Request) -> dict[str, Any]:
+    """Disable camera-servo control and cancel any running agent task."""
     c = get_container(request)
-    target = c.ai.route(body.mode, body.deep_analysis)
-    if target == "grok" and not body.external_consent:
-        raise err(403, "consent_required", "sending data to Grok requires explicit operator consent")
-    if body.snapshot_id:
-        try:
-            safe_media_path(c.camera.snap_dir, body.snapshot_id)
-        except CameraError as exc:
-            raise err(404, "snapshot_not_found", str(exc)) from exc
+    c.servo.disarm()
+    cancelled = c.agent.stop("EMERGENCY STOP")
+    c.events.add("error", "operator", "EMERGENCY STOP: servo control disabled" + (", agent cancelled" if cancelled else ""))
+    return {"servo": c.servo.state(), "agent": c.agent.snapshot(), "cancelled": cancelled}
+
+
+@router.post("/session/reset")
+async def reset_session(request: Request) -> dict[str, Any]:
+    """Cancel the agent, clear the chat, zero relative yaw and reset environment min/max."""
+    c = get_container(request)
+    c.agent.stop("session reset")
+    await asyncio.to_thread(c.agent.clear_history)
+    c.imu.reset_yaw()
+    c.dht.reset_session_extremes()
+    c.agent.state.update({"status": "idle", "node": None, "plan": [], "task": None, "step": None, "error": None})
+    c.events.add("info", "operator", "session reset")
+    return {"ok": True}
+
+
+# ========================================================= detector
+@router.get("/detector")
+async def detector_state(request: Request) -> dict[str, Any]:
+    c = get_container(request)
+    return {**c.detector.state(), "latest": c.detector.latest()}
+
+
+@router.get("/detector/classes")
+async def detector_classes(request: Request) -> dict[str, Any]:
+    c = get_container(request)
+    return {"classes": c.detector.vocabulary, "coco80": COCO80}
+
+
+@router.post("/detector/prompts")
+async def detector_prompts(body: PromptsRequest, request: Request) -> dict[str, Any]:
+    c = get_container(request)
+    try:
+        prompts = c.detector.set_prompts(body.prompts)
+    except DetectorError as exc:
+        raise err(422, "unknown_class", str(exc)) from exc
+    return {"prompts": prompts}
+
+
+# ============================================================ agent / Qwen
+@router.get("/ai/status")
+async def ai_status(request: Request) -> dict[str, Any]:
+    return get_container(request).qwen.status()
+
+
+@router.get("/agent")
+async def agent_state(request: Request) -> dict[str, Any]:
+    return get_container(request).agent.snapshot()
+
+
+@router.post("/agent/run")
+async def agent_run(body: AgentRunRequest, request: Request):
+    """Give Qwen a task. Streams NDJSON events: run, node, plan, step, progress, observation,
+    suggestions, delta/replace, done | stopped | error."""
+    c = get_container(request)
+    if c.agent.running:
+        raise err(409, "agent_busy", "the agent is already running a task — stop it first")
 
     async def gen():
         try:
-            async for ev in c.ai.chat(body.message, body.mode, deep_analysis=body.deep_analysis,
-                                      external_consent=body.external_consent, include_telemetry=body.include_telemetry,
-                                      snapshot_id=body.snapshot_id, history_turns=body.history_turns):
+            async for ev in c.agent.run(body.task.strip()):
                 yield json.dumps(ev, default=str) + "\n"
+        except AgentBusy as exc:
+            yield json.dumps({"type": "error", "code": "agent_busy", "message": str(exc)}) + "\n"
         except Exception as exc:  # never let an AI failure break the API
-            log.exception("AI chat failed")
+            log.exception("agent run failed")
             yield json.dumps({"type": "error", "code": "internal", "message": str(exc)}) + "\n"
 
     return StreamingResponse(gen(), media_type="application/x-ndjson", headers={"Cache-Control": "no-store"})
 
 
-@router.get("/ai/history")
-async def ai_history(request: Request, limit: int = Query(100, ge=1, le=500)) -> list[dict[str, Any]]:
-    return await asyncio.to_thread(get_container(request).ai.history, limit)
-
-
-@router.delete("/ai/history")
-async def ai_history_clear(request: Request) -> dict[str, Any]:
-    await asyncio.to_thread(get_container(request).ai.clear_history)
-    return {"cleared": True}
-
-
-@router.get("/ai/usage")
-async def ai_usage(request: Request) -> dict[str, Any]:
+@router.post("/agent/stop")
+async def agent_stop(request: Request) -> dict[str, Any]:
     c = get_container(request)
-    return {"totals": c.ai.usage_summary(), "grok_session": c.grok.status()["usage"]}
+    return {"cancelled": c.agent.stop("stopped by operator"), "agent": c.agent.snapshot()}
+
+
+@router.get("/agent/history")
+async def agent_history(request: Request, limit: int = Query(100, ge=1, le=500)) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(get_container(request).agent.history, limit)
+
+
+@router.delete("/agent/history")
+async def agent_history_clear(request: Request) -> dict[str, Any]:
+    await asyncio.to_thread(get_container(request).agent.clear_history)
+    return {"cleared": True}
 
 
 @router.post("/ai/qwen/{action}")
@@ -455,34 +520,6 @@ async def ai_qwen_control(action: str, request: Request) -> dict[str, Any]:
 @router.get("/mapping")
 async def mapping(request: Request) -> dict[str, Any]:
     return get_container(request).mapping.state()
-
-
-@router.post("/mapping/analyze")
-async def mapping_analyze(body: AnalyzeRequest, request: Request) -> dict[str, Any]:
-    c = get_container(request)
-    path = None
-    if body.snapshot_id:
-        try:
-            path = safe_media_path(c.camera.snap_dir, body.snapshot_id)
-        except CameraError as exc:
-            raise err(404, "snapshot_not_found", str(exc)) from exc
-    try:
-        return await c.mapping.analyze_now("manual", image_path=path)
-    except Exception as exc:
-        raise err(503, "analysis_failed", str(exc)) from exc
-
-
-@router.get("/mapping/observations")
-async def mapping_observations(request: Request, limit: int = Query(50, ge=1, le=200)) -> list[dict[str, Any]]:
-    return get_container(request).mapping.latest_observations(limit)
-
-
-@router.post("/mapping/auto")
-async def mapping_auto(body: AutoAnalysisRequest, request: Request) -> dict[str, Any]:
-    c = get_container(request)
-    c.mapping.auto_interval_s = body.interval_s
-    c.events.add("info", "mapping", f"automatic scene analysis {'every %.0fs' % body.interval_s if body.interval_s else 'disabled'}")
-    return {"auto_interval_s": c.mapping.auto_interval_s}
 
 
 @router.post("/mapping/vo")

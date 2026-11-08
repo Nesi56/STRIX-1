@@ -69,11 +69,9 @@ def test_retention_removes_old_sessions(client):
     assert client.get(f"/api/recordings/{sid}").status_code == 404
 
 
-def test_observations_are_persisted(client):
-    wait_for(lambda: client.get("/api/camera/status").json()["frame_seq"] > 0)
-    obs = client.post("/api/mapping/analyze", json={}).json()
-    assert obs["image_relative_only"] is True and obs["frame"]["synthetic"] is True
+def test_detections_are_logged(client):
     c = client.app.state.container
-    c.db.flush()
-    rows = c.db.query("SELECT kind, source FROM observations")
-    assert rows and rows[-1]["source"] == "opencv"
+    wait_for(lambda: c.detector.latest() is not None)
+    wait_for(lambda: (c.db.flush() or True) and c.db.query("SELECT COUNT(*) AS n FROM observations")[0]["n"] > 0, timeout=8)
+    row = c.db.query("SELECT source, kind, data FROM observations ORDER BY id DESC LIMIT 1")[0]
+    assert row["kind"] == "detections" and row["source"] == "synthetic"

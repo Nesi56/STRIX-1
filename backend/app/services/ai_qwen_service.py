@@ -267,11 +267,67 @@ class QwenService:
         finally:
             self._sem.release()
 
+    async def complete_json(self, messages: list[dict[str, Any]], schema: dict[str, Any],
+                            max_tokens: int = 300) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Grammar-constrained JSON completion (llama-server ``response_format`` + schema)."""
+        if not self.settings.qwen_enabled or self._client is None:
+            raise LLMError("local Qwen is disabled (QWEN_ENABLED=false)", "disabled")
+        if self.state != "ready":
+            raise LLMError(f"local model not ready ({self.state})", "not_ready")
+        payload = {
+            "model": self.settings.qwen_model_id,
+            "messages": messages,
+            "stream": False,
+            "max_tokens": max_tokens,
+            "temperature": 0.1,
+            "response_format": {"type": "json_object", "schema": schema},
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        self.waiting += 1
+        try:
+            await self._sem.acquire()
+        finally:
+            self.waiting -= 1
+        try:
+            self.stats["requests"] += 1
+            t0 = time.perf_counter()
+            try:
+                r = await self._client.post(f"{self.base_url}/v1/chat/completions", json=payload)
+            except httpx.TimeoutException as exc:
+                self.stats["errors"] += 1
+                raise LLMError(f"local model timed out after {self.settings.qwen_timeout_s:.0f}s", "timeout") from exc
+            except httpx.HTTPError as exc:
+                self.stats["errors"] += 1
+                self.state = "unreachable"
+                raise LLMError(f"local model connection failed: {exc.__class__.__name__}", "connection") from exc
+            if r.status_code != 200:
+                self.stats["errors"] += 1
+                raise LLMError(f"llama-server HTTP {r.status_code}: {r.text[:300]}", "http_error")
+            body = r.json()
+            text = ((body.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError as exc:
+                self.stats["errors"] += 1
+                raise LLMError(f"model returned invalid JSON: {text[:120]!r}", "bad_json") from exc
+            timings = body.get("timings") or {}
+            usage = body.get("usage") or {}
+            stats = {
+                "latency_ms": round((time.perf_counter() - t0) * 1000),
+                "tokens_per_s": round(timings["predicted_per_second"], 2) if timings.get("predicted_per_second") else None,
+                "prompt_tokens": usage.get("prompt_tokens", timings.get("prompt_n")),
+                "completion_tokens": usage.get("completion_tokens", timings.get("predicted_n")),
+            }
+            self.stats["last"] = {**stats, "ts": time.time()}
+            return data, stats
+        finally:
+            self._sem.release()
+
     def status(self) -> dict[str, Any]:
         s = self.settings
         return {
             "provider": self.provider,
-            "label": "Local Qwen (llama.cpp)",
+            "label": "Qwen (local, llama.cpp)",
             "enabled": s.qwen_enabled,
             "state": self.state,
             "detail": self.detail,
@@ -289,5 +345,4 @@ class QwenService:
             "busy": self._sem.locked(),
             "queued": self.waiting,
             "stats": self.stats,
-            "local": True,
         }

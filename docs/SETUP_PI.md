@@ -125,18 +125,18 @@ ready and stays fully usable meanwhile. Model options, vision models and perform
 Alternative: `QWEN_MANAGE_SERVER=true` with `QWEN_LLAMA_SERVER_BIN`/`QWEN_MODEL_PATH`, which
 makes the backend start llama-server itself (with nice 5 and a free-memory check).
 
-## 7. Grok (optional, cloud)
+## 7. Object detection model (YOLO stream)
 
-```ini
-GROK_ENABLED=true
-XAI_API_KEY=xai-…           # from https://console.x.ai — stays on the Pi, never sent to the browser
-GROK_MODEL=grok-4           # any model id your account can use
-GROK_RATE_LIMIT_PER_MIN=4
-GROK_DAILY_REQUEST_LIMIT=200
+```bash
+scripts/get_detector_model.sh             # YOLOX-S, Apache-2.0, checksum-verified → models/yolox_s.onnx
+# optional, ~4x faster on the Pi (Ultralytics, AGPL-3.0; needs a temporary torch install):
+scripts/get_detector_model.sh --yolo11n
 ```
 
-Nothing is sent to xAI unless you pick *Grok Cloud* or *Deep analysis* in the assistant
-**and confirm the consent dialog**. Details: [AI.md](AI.md#grok-cloud).
+The detector picks up `models/*.onnx` automatically (YOLO11/YOLOv8 preferred over YOLOX). Without
+a model it falls back to OpenCV's person-only HOG detector. Check the YOLO FPS in the video's
+top-right corner. Then test the servo direction: press **E**, then **W**. The camera must tilt
+**up**; if it tilts down, set `STRIX_SERVO_UP_IS_POSITIVE=false`.
 
 ## 8. Autostart with systemd
 

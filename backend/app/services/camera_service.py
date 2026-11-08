@@ -325,6 +325,7 @@ class MockCameraBackend:
         self._last_bgr = None
         self._bg = None
         self._rng = random.Random(7)
+        self._last_gt: tuple[int, int, list] | None = None
 
     def _render_background(self, w: int, h: int):
         import cv2
@@ -355,6 +356,44 @@ class MockCameraBackend:
             cv2.circle(img, (x, horizon - r - r // 2), r, (40, 120 + 10 * i, 50), -1)
         return img
 
+    # Synthetic world: pinhole camera (HFOV from settings) ~1 m above flat ground.
+    CAM_HEIGHT_M = 1.0
+
+    def _objects(self, t: float) -> list[tuple[str, float, float, float, float]]:
+        """(label, height_m, distance_m, bearing_deg, confidence) for this instant."""
+        return [
+            ("person", 1.70, 4.5 + 1.2 * math.sin(t * 0.11), 22.0 * math.sin(t * 0.15), 0.91),
+            ("person", 1.75, 9.0, -14.0, 0.84),
+            ("car", 1.50, 13.0, 30.0, 0.88),
+        ]
+
+    @staticmethod
+    def _draw_person(img, cx: float, base: float, hp: float) -> None:
+        import cv2
+
+        hp = max(8.0, hp)
+        cx, base = int(cx), int(base)
+        r = max(2, int(hp * 0.11))
+        th = max(1, int(hp * 0.05))
+        cv2.circle(img, (cx, int(base - hp + r)), r, (95, 125, 190), -1)  # head
+        cv2.rectangle(img, (int(cx - hp * 0.13), int(base - hp + 2 * r)), (int(cx + hp * 0.13), int(base - hp * 0.45)), (60, 60, 150), -1)
+        cv2.line(img, (cx, int(base - hp * 0.47)), (int(cx - hp * 0.1), base), (40, 40, 45), th)
+        cv2.line(img, (cx, int(base - hp * 0.47)), (int(cx + hp * 0.1), base), (40, 40, 45), th)
+        cv2.line(img, (int(cx - hp * 0.13), int(base - hp * 0.75)), (int(cx - hp * 0.22), int(base - hp * 0.45)), (60, 60, 150), th)
+        cv2.line(img, (int(cx + hp * 0.13), int(base - hp * 0.75)), (int(cx + hp * 0.22), int(base - hp * 0.45)), (60, 60, 150), th)
+
+    @staticmethod
+    def _draw_car(img, cx: float, base: float, hp: float) -> None:
+        import cv2
+
+        w = hp * 2.6
+        x0, x1 = int(cx - w / 2), int(cx + w / 2)
+        cv2.rectangle(img, (x0, int(base - hp * 0.62)), (x1, int(base - hp * 0.12)), (40, 40, 170), -1)
+        cv2.rectangle(img, (int(cx - w * 0.28), int(base - hp)), (int(cx + w * 0.22), int(base - hp * 0.6)), (60, 50, 140), -1)
+        cv2.rectangle(img, (int(cx - w * 0.24), int(base - hp * 0.94)), (int(cx + w * 0.18), int(base - hp * 0.66)), (200, 180, 150), -1)
+        for wx in (x0 + w * 0.2, x1 - w * 0.2):
+            cv2.circle(img, (int(wx), int(base - hp * 0.14)), max(2, int(hp * 0.16)), (25, 25, 25), -1)
+
     def _frame(self, t: float):
         import cv2
 
@@ -369,25 +408,35 @@ class MockCameraBackend:
                 roll, pitch, servo = self._pose()
             except Exception:
                 pass
-        tilt = (servo - 90.0) if servo is not None else 0.0
-        # Vertical pan from servo tilt + pitch (≈ pixels per degree for a ~100° HFOV).
-        ppd = w / 100.0
-        cy = H / 2 + (tilt + pitch) * ppd
-        cx = W / 2 + 40 * math.sin(t * 0.07)
+        sign = 1.0 if self.settings.servo_up_is_positive else -1.0
+        tilt = (servo - self.settings.servo_center_angle) * sign if servo is not None else 0.0
+        f = (w / 2.0) / math.tan(math.radians(self.settings.camera_hfov_deg) / 2.0)
+        ppd = f * math.pi / 180.0
+        # Camera tilting up (servo) or nose-up (pitch) shows the upper part of the world.
+        cy = H / 2 - (tilt + pitch) * ppd
+        cx = W / 2 + 0.02 * W * math.sin(t * 0.07)
         x0 = int(max(0, min(W - w, cx - w / 2)))
         y0 = int(max(0, min(H - h, cy - h / 2)))
         view = bg[y0 : y0 + h, x0 : x0 + w].copy()
-        # A walking "person" for the detector to find.
-        px = int((0.5 + 0.35 * math.sin(t * 0.2)) * w)
-        py = int(h * 0.62)
-        s = max(6, h // 30)
-        cv2.circle(view, (px, py - 5 * s), s, (60, 80, 200), -1)
-        cv2.rectangle(view, (px - s, py - 4 * s), (px + s, py), (50, 50, 160), -1)
-        cv2.line(view, (px - s // 2, py), (px - s, py + 3 * s), (40, 40, 40), max(2, s // 3))
-        cv2.line(view, (px + s // 2, py), (px + s, py + 3 * s), (40, 40, 40), max(2, s // 3))
+        horizon_v = H / 2 - y0  # horizon row in view coordinates
+        gt: list[tuple[str, float, tuple[float, float, float, float]]] = []
+        objs = sorted(self._objects(t), key=lambda o: -o[2])  # draw far → near
+        for label, height_m, dist, bearing, conf in objs:
+            hp = f * height_m / dist
+            base = horizon_v + f * self.CAM_HEIGHT_M / dist
+            ox = (W / 2 - x0) + f * math.tan(math.radians(bearing))
+            if label == "person":
+                self._draw_person(view, ox, base, hp)
+                box = (ox - hp * 0.24, base - hp, hp * 0.48, hp)
+            else:
+                self._draw_car(view, ox, base, hp)
+                box = (ox - hp * 1.3, base - hp, hp * 2.6, hp)
+            gt.append((label, conf, box))
+        M = None
         if abs(roll) > 0.01:
             M = cv2.getRotationMatrix2D((w / 2, h / 2), -roll, 1.0)
             view = cv2.warpAffine(view, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        self._last_gt = (w, h, self._project_gt(gt, M, w, h))
         noise = self._rng.randint(0, 3)
         if noise:
             view = cv2.add(view, noise)
@@ -399,6 +448,29 @@ class MockCameraBackend:
         cv2.putText(view, f"{stamp}  #{self._seq}", (w - int(330 * fs), int(30 * fs)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8 * fs, (230, 230, 230), max(1, int(2 * fs)), cv2.LINE_AA)
         return view
+
+    def _project_gt(self, gt, M, w: int, h: int):
+        """Apply the roll rotation to synthetic boxes and clip them to the frame."""
+        out = []
+        for label, conf, (x, y, bw, bh) in gt:
+            corners = [(x, y), (x + bw, y), (x, y + bh), (x + bw, y + bh)]
+            if M is not None:
+                corners = [(M[0][0] * cx_ + M[0][1] * cy_ + M[0][2], M[1][0] * cx_ + M[1][1] * cy_ + M[1][2]) for cx_, cy_ in corners]
+            xs = [c[0] for c in corners]
+            ys = [c[1] for c in corners]
+            ax0, ay0, ax1, ay1 = min(xs), min(ys), max(xs), max(ys)
+            cx0, cy0, cx1, cy1 = max(0, ax0), max(0, ay0), min(w, ax1), min(h, ay1)
+            full = (ax1 - ax0) * (ay1 - ay0)
+            vis = max(0.0, cx1 - cx0) * max(0.0, cy1 - cy0)
+            if full <= 0 or vis / full < 0.35:
+                continue
+            jitter = self._rng.uniform(-0.03, 0.02)
+            out.append((label, round(min(0.99, conf + jitter), 2), (cx0, cy0, cx1 - cx0, cy1 - cy0)))
+        return out
+
+    def ground_truth(self):
+        """(frame_w, frame_h, [(label, confidence, (x, y, w, h))]) for the latest synthetic frame."""
+        return self._last_gt
 
     def _run(self, stop: threading.Event) -> None:
         import cv2
@@ -627,6 +699,11 @@ class CameraService:
         backend.reconfigure((width, height), fps)
         self.events.add("info", "camera", f"stream set to {width}x{height} @ {fps:g} fps")
         return self.camera_status()
+
+    def ground_truth(self):
+        """Synthetic camera only: object boxes for the latest frame (None on real hardware)."""
+        b = self._backend
+        return b.ground_truth() if b is not None and hasattr(b, "ground_truth") else None
 
     def analysis_frame(self):
         """BGR frame (≈640 px wide) for vision. Call from a worker thread only."""

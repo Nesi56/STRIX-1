@@ -14,9 +14,10 @@ an optional MediaMTX process.
 | `system_monitor` | own thread | 0.5 Hz (vcgencmd 0.2 Hz) | psutil, sysfs, vcgencmd |
 | `telemetry_service` | asyncio task | 20 Hz (+1 Hz full) | WebSocket clients via bounded queues |
 | `recording_service` | asyncio task + SQLite writer thread | 10 Hz | batched inserts (WAL) |
-| `mapping_service` | asyncio + worker threads | on demand / auto / VO 5 Hz | OpenCV |
+| `detector_service` | own thread | up to 4 Hz (inference-bound) | ONNX YOLO/YOLOX, HOG fallback, synthetic GT |
+| `agent_service` | asyncio task per run | skills poll at 5 Hz | Qwen (plan/report), ServoService |
+| `mapping_service` | worker thread | VO 5 Hz (opt-in) | OpenCV |
 | `ai_qwen_service` | asyncio (httpx) | on demand, serialized | llama-server on localhost |
-| `ai_grok_service` | asyncio (httpx) | on demand, rate limited | api.x.ai |
 
 Blocking hardware I/O never runs on the event loop. Threads publish to lock-protected
 "latest value" slots. The loop reads them, and events cross into the loop with
@@ -30,9 +31,9 @@ initialisation periodically, so re-plugging a sensor recovers without a restart.
 MPU6050 ──burst read──▶ axis map ──▶ calibration ──▶ complementary filter ──▶ latest/ring ──▶ WS 20 Hz
 DHT11  ──IIO sysfs──▶ plausibility check ──▶ latest/history/session extremes ──────────────▶ WS 1 Hz
 Camera ──JpegEncoder──▶ LatestValueHub ──▶ /api/camera/stream.mjpg (each viewer: newest frame only)
-       ──H264Encoder──▶ PyavOutput (MP4)       ──lores──▶ OpenCV analysis / VO
-All    ──recorder 10 Hz──▶ SQLite (sessions, telemetry, events, observations, chat, ai_usage)
-AI     ◀── ai_context (timestamped digest) ◀── all services
+       ──H264Encoder──▶ PyavOutput (MP4)       ──lores──▶ YOLO detector ──▶ objects + range/bearing ──▶ WS
+All    ──recorder 10 Hz──▶ SQLite (sessions, telemetry, events, detections, chat)
+Agent  ◀── ai_context.observe (IMU, DHT11, servo, detections) ──▶ Qwen plan ──▶ servo skills ──▶ Qwen report
 ```
 
 ## Orientation conventions
@@ -46,7 +47,8 @@ visual smoothing constant, which can be turned off. Numeric readouts are never s
 ## Safety design
 
 - **No flight control.** No module has an interface to motors, ESCs, flight controllers or
-  navigation. The servo module drives one PWM pin for the camera tilt only.
+  navigation. The servo module drives one PWM pin for the camera tilt only, and it is the only
+  thing the Qwen agent can actuate. Movement advice is text for the pilot.
 - **Servo.** Disarmed at boot; safe limits clamp every command; 50 Hz slew limiter; disarm
   stops motion immediately; pulses are released when idle. The SG90 has no position feedback,
   so angles are labeled *commanded*.
@@ -54,8 +56,9 @@ visual smoothing constant, which can be turned off. Numeric readouts are never s
   synthetic sample, frame, file and session is labeled. A missing device reports
   *disconnected*, never fake data. Position is *unavailable* without a validated source. IMU
   acceleration is never integrated into position. Battery % is not estimated.
-- **AI.** Grounded context, claim tags, no tools/actions, shell-command filtering, no image
-  sent to text-only models, explicit consent for any cloud request, no automatic uploads.
+- **AI.** Local only (no cloud). Grounded observation, claim tags, schema-constrained plans that are
+  validated and clamped, a closed set of camera skills gated by the operator's enable switch,
+  emergency stop that cancels in-flight inference, and shell-command filtering of answers.
 - **Network.** Private-network allow-list, token auth with HMAC-signed HttpOnly SameSite=Strict
   cookies, WebSocket origin check, login rate limiting, secrets only in `.env` (never returned
   by the API, never logged), media path-traversal protection.
@@ -63,7 +66,7 @@ visual smoothing constant, which can be turned off. Numeric readouts are never s
   `MemoryMax`. Low-memory, thermal and under-voltage warnings are shown in the dashboard and
   available to the AI.
 
-## Extending localization (Mode C)
+## Extending localization
 
 `mapping_service.LocalizationSource` describes each source: `installed`, `running`,
 `validated`, `experimental`, `frame`. Only a **validated** running source may provide a position

@@ -1,7 +1,7 @@
 # Troubleshooting
 
 Logs first: `journalctl -u strix1 -f` (or the terminal running `scripts/run_backend.sh`),
-`~/STRIX-1/data/logs/strix1.log`, and the dashboard's *Recordings & Logs → Backend log*.
+`~/STRIX-1/data/logs/strix1.log`, and the console's *Recordings* view → *Logs & Events → Backend log*.
 
 ## Access / network
 
@@ -55,7 +55,7 @@ Logs first: `journalctl -u strix1 -f` (or the terminal running `scripts/run_back
 | Commands rejected (409) | Control is disabled: press *Enable control*. It starts disabled after every restart unless `STRIX_SERVO_START_ARMED=true`. |
 | Servo jitters / hums | Software PWM jitter (gpiozero/lgpio): keep `STRIX_SERVO_DETACH_WHEN_IDLE=true` or switch to hardware PWM. A weak supply or missing common ground also causes jitter. |
 | Pi reboots / under-voltage when the servo moves | The servo is drawing from the Pi's supply. Use a separate regulated 5 V supply with common ground. |
-| Hits an end-stop | Narrow `STRIX_SERVO_MIN/MAX_ANGLE` (Settings page) or adjust the pulse range. |
+| Hits an end-stop | Narrow `STRIX_SERVO_MIN/MAX_ANGLE` (Calibration view) or adjust the pulse range. |
 
 ## AI
 
@@ -64,10 +64,20 @@ Logs first: `journalctl -u strix1 -f` (or the terminal running `scripts/run_back
 | Qwen *UNREACHABLE* | `systemctl status strix1-llama`; `curl http://127.0.0.1:8080/health`; `QWEN_SERVER_URL` must match. |
 | Qwen *LOADING* for a long time | Large model on SD card: first load reads ~2 GB. Use an NVMe/USB SSD for models. |
 | Very slow answers | Lower `QWEN_CTX_SIZE` and `QWEN_MAX_TOKENS`, use a 3B Q4 model, reduce camera load, and keep `QWEN_THREADS=3`. |
-| Grok *NOT CONFIGURED* | Set `GROK_ENABLED=true` and `XAI_API_KEY` in `.env`, then restart. |
-| Grok 401/404 | Wrong key or a model id your account can't use (`GROK_MODEL`). |
-| "rate limit" | The local limiter (`GROK_RATE_LIMIT_PER_MIN`, `GROK_DAILY_REQUEST_LIMIT`) or an xAI quota. |
-| Answer says FILTERED | The model produced a shell/command block. It was removed on purpose. |
+| Answer contains "command block removed" | The model produced a shell/command block. It was removed on purpose. |
+| Chat says "RULE PLAN" | Qwen was not ready (loading/unreachable) or returned unusable JSON, so the keyword planner was used. Check llama-server. |
+| Agent says "servo control is disabled" | Press **E** (or *Enable*) first. The agent only moves the camera after you enable it. |
+| Camera tilts the wrong way | Set `STRIX_SERVO_UP_IS_POSITIVE=false` and restart. |
+| "agent is already running" (409) | Wait for the task or press **Esc** / *Stop*. |
+
+## Object detection
+
+| Symptom | Check / fix |
+|---|---|
+| Prompts panel says HOG fallback | No ONNX model in `models/`. Run `scripts/get_detector_model.sh`. |
+| YOLO FPS very low | YOLOX-S is heavy for the Pi 5 CPU. Use `--yolo11n` (lighter), lower `STRIX_DETECTOR_HZ`, or reduce Qwen threads while detecting. |
+| Prompt rejected | Only COCO-80 class names work (e.g. `person, car, dog, chair, bottle, cell phone`). |
+| Distances look wrong | Estimates assume a standing, fully visible object (person 1.7 m). Sitting people or cut-off boxes are farther/closer than shown. Check `STRIX_CAMERA_HFOV_DEG` (102 for Camera Module 3 *Wide*, ~66 for the standard module). |
 
 ## Power / thermals
 

@@ -62,7 +62,7 @@ if [ ! -d .venv ]; then python3 -m venv --system-site-packages .venv; fi
 .venv/bin/python -m pip install -r requirements-pi.txt
 .venv/bin/python - <<'PY'
 import importlib
-for m in ("fastapi", "uvicorn", "numpy", "cv2", "picamera2", "gpiozero", "board", "adafruit_mpu6050", "adafruit_dht"):
+for m in ("fastapi", "uvicorn", "numpy", "cv2", "onnxruntime", "picamera2", "gpiozero", "board", "adafruit_mpu6050", "adafruit_dht"):
     try:
         importlib.import_module(m); print(f"  ok   {m}")
     except Exception as e:  # noqa: BLE001
@@ -136,4 +136,5 @@ fi
 PORT="$(grep -E '^STRIX_PORT=' .env | cut -d= -f2 | awk '{print $1}')"; PORT="${PORT:-8000}"
 say "Done. Start manually with:  $REPO/scripts/run_backend.sh"
 say "Then open  http://$(hostname).local:${PORT}  or  http://$(hostname -I 2>/dev/null | awk '{print $1}'):${PORT}  from your laptop."
+say "Detector model:  scripts/get_detector_model.sh   ·   Local Qwen: docs/AI.md"
 say "Verify hardware:  scripts/verify_all.sh"
