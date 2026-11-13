@@ -2,7 +2,7 @@ import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { errorMessage, post } from "../../services/api";
 
-export function LoginScreen({ onLogin }: { onLogin: () => void }) {
+export function LoginScreen({ onLogin, hub = false }: { onLogin: () => void; hub?: boolean }) {
   const [token, setToken] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -24,9 +24,11 @@ export function LoginScreen({ onLogin }: { onLogin: () => void }) {
       <form onSubmit={submit} className="panel corner relative w-full max-w-sm space-y-3 p-5">
         <div className="flex items-center gap-2">
           <svg viewBox="0 0 64 64" className="h-8 w-8" aria-hidden><path d="M32 8 L56 30 L45 30 L32 54 L19 30 L8 30 Z" fill="none" stroke="#38d6ff" strokeWidth="4" strokeLinejoin="round" /></svg>
-          <div><div className="text-lg font-semibold tracking-[0.3em]">STRIX-1</div><div className="label">Ground station access</div></div>
+          <div><div className="text-lg font-semibold tracking-[0.3em]">STRIX-1</div><div className="label">{hub ? "Hub access · all drones" : "Ground station access"}</div></div>
         </div>
-        <p className="text-[12px] text-muted">Enter the access token from <code>STRIX_AUTH_TOKEN</code> in the Pi's <code>.env</code> (printed by the installer).</p>
+        {hub
+          ? <p className="text-[12px] text-muted">Enter the hub's access token. On the hub computer, run <code>strix-hub token hub.toml</code> to show it.</p>
+          : <p className="text-[12px] text-muted">Enter the access token from <code>STRIX_AUTH_TOKEN</code> in the Pi's <code>.env</code> (printed by the installer).</p>}
         <label className="block">
           <span className="label">Access token</span>
           <input className="input mt-1 w-full" type="password" autoComplete="current-password" autoFocus value={token} onChange={(e) => setToken(e.target.value)} />

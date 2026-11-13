@@ -1,6 +1,7 @@
 // Fetch-based MJPEG reader: always draws the newest frame (stale frames are dropped so
 // latency stays bounded), measures received FPS, bitrate and glass-to-browser latency
 // from the X-Capture-Time header plus the WebSocket clock offset.
+import { droneUrl } from "../services/drone";
 import { useEffect, useState, type RefObject } from "react";
 import { telemetry } from "./useTelemetry";
 import { errorMessage } from "../services/api";
@@ -61,7 +62,7 @@ export function useMjpeg(canvas: RefObject<HTMLCanvasElement | null>, enabled: b
     const run = async () => {
       while (!ac.signal.aborted) {
         try {
-          const url = `/api/camera/stream.mjpg${maxFps ? `?fps=${maxFps}` : ""}`;
+          const url = droneUrl(`/api/camera/stream.mjpg${maxFps ? `?fps=${maxFps}` : ""}`);
           const r = await fetch(url, { signal: ac.signal, credentials: "same-origin", cache: "no-store" });
           if (!r.ok || !r.body) throw new Error(`stream HTTP ${r.status}`);
           lastErr = null;

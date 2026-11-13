@@ -1,6 +1,8 @@
 // Thin fetch wrapper around the STRIX-1 REST API. Authentication uses the
 // HttpOnly session cookie set by POST /api/auth/login (same-origin), so no
-// token is ever stored in JavaScript.
+// token is ever stored in JavaScript. In hub mode, drone routes go through
+// /d/<id>/ (see drone.ts).
+import { droneUrl } from "./drone";
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public details?: unknown) {
@@ -35,7 +37,7 @@ async function parseError(r: Response): Promise<ApiError> {
 }
 
 export async function api<T>(path: string, init: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
-  const r = await fetch(path, {
+  const r = await fetch(droneUrl(path), {
     method: init.method ?? "GET",
     credentials: "same-origin",
     headers: init.body !== undefined ? { "Content-Type": "application/json" } : undefined,
@@ -55,7 +57,7 @@ export const del = <T>(p: string) => api<T>(p, { method: "DELETE" });
 
 /** POST a JSON body and iterate over newline-delimited JSON events. */
 export async function* streamNdjson<T>(path: string, body: unknown, signal?: AbortSignal): AsyncGenerator<T> {
-  const r = await fetch(path, {
+  const r = await fetch(droneUrl(path), {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },

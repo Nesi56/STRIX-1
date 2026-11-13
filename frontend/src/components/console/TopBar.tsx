@@ -14,7 +14,7 @@ export async function emergencyStop(toast: (t: string, tone?: "info" | "ok" | "w
   }
 }
 
-export function TopBar() {
+export function TopBar({ nav }: { nav?: React.ReactNode } = {}) {
   const st = useTelemetry();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -59,8 +59,9 @@ export function TopBar() {
             <rect x="14" y="14" width="8" height="8" rx="1" fill="none" stroke="#3ddc84" strokeWidth="2" />
           </svg>
           <span className="text-[17px] font-bold tracking-[0.12em] text-text">STRIX-1</span>
-          <span className="hidden text-[10px] tracking-[0.14em] text-dim md:inline">AI CAMERA DRONE · QWEN + YOLO</span>
+          {!nav && <span className="hidden text-[10px] tracking-[0.14em] text-dim md:inline">AI CAMERA DRONE · QWEN + YOLO</span>}
         </div>
+        {nav}
         {st?.demo_mode && <span className="hidden shrink-0 rounded border border-synth/40 bg-synth/10 px-1.5 text-[10px] tracking-wider text-synth sm:inline">SYNTHETIC DEMO DATA</span>}
         <div className="flex-1" />
         <button className={`btn shrink-0 ${recording ? "btn-danger" : ""}`} disabled={busy} onClick={() => void toggleRec()}

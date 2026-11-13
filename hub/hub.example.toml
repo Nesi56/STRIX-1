@@ -1,0 +1,36 @@
+# STRIX-1 hub — copy to hub.toml and edit. hub.toml is git-ignored.
+# Run:  cargo run --release -- hub.toml      (or ./target/release/strix-hub hub.toml)
+# The dashboard token is created in data/hub_token; print it with `strix-hub token hub.toml`.
+
+# Only this computer can open the dashboard. Use "0.0.0.0:9000" to let phones/tablets on the
+# same Wi-Fi open it too (private networks and Tailscale only; never the public internet).
+listen = "127.0.0.1:9000"
+ui_dir = "../frontend/dist"
+data_dir = "data"
+session_ttl_hours = 12
+
+# One [[drone]] per Pi (up to 8; the fleet view is laid out for 2-4).
+# token_env names an environment variable holding that drone's STRIX_AUTH_TOKEN
+# (or use token_file = "secrets/alpha.token"). Never write the token itself here.
+[[drone]]
+id = "alpha"
+name = "Alpha"
+url = "http://strix-alpha.local:8000"
+token_env = "STRIX_ALPHA_TOKEN"
+color = "#5fd4ff"
+
+[[drone]]
+id = "bravo"
+name = "Bravo"
+url = "http://strix-bravo.local:8000"
+token_env = "STRIX_BRAVO_TOKEN"
+color = "#ffb547"
+
+# Optional: run Qwen on this computer for every drone (keeps the Pis cool).
+# 1. Start llama.cpp here:  llama-server -m <model.gguf> --mmproj <mmproj.gguf> --host 127.0.0.1 --port 8080
+# 2. On each Pi, in .env:   QWEN_SERVER_URL=http://<this-computer-ip>:9080
+#                           QWEN_API_KEY=<output of `strix-hub qwen-key hub.toml`>
+#                           QWEN_MANAGE_SERVER=false
+# [qwen]
+# listen = "0.0.0.0:9080"
+# upstream = "http://127.0.0.1:8080"

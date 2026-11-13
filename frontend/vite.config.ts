@@ -14,6 +14,8 @@ export default defineConfig({
     proxy: {
       "/api": { target: backend, changeOrigin: false },
       "/ws": { target: backend.replace(/^http/, "ws"), ws: true },
+      // hub mode (STRIX_BACKEND=http://127.0.0.1:9000): per-drone routes, WebSockets included
+      "/d": { target: backend, changeOrigin: false, ws: true },
     },
   },
   build: {

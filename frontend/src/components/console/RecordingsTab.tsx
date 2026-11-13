@@ -1,4 +1,5 @@
 import { FileJson, FileSpreadsheet, Pause, Play, Trash2, Video } from "lucide-react";
+import { droneUrl } from "../../services/drone";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePoll } from "../../hooks/usePoll";
 import { del, errorMessage, get } from "../../services/api";
@@ -153,9 +154,9 @@ export function RecordingsTab() {
             <div className="mt-0.5 text-dim">{fmtTime(s.started_at, true)} · {s.samples} samples{video ? " · video" : ""}</div>
             <div className="mt-1 flex flex-wrap gap-1">
               <button className="btn btn-sm" disabled={s.active} onClick={() => setSelected(s)}><Play size={10} /> Play</button>
-              {video && <a className="btn btn-sm" href={`/api/camera/videos/${encodeURIComponent(video)}`} download><Video size={10} /> Video</a>}
-              <a className="btn btn-sm" href={`/api/recordings/${s.id}/export.csv`} download><FileSpreadsheet size={10} /> CSV</a>
-              <a className="btn btn-sm" href={`/api/recordings/${s.id}/export.json`} download><FileJson size={10} /> JSON</a>
+              {video && <a className="btn btn-sm" href={droneUrl(`/api/camera/videos/${encodeURIComponent(video)}`)} download><Video size={10} /> Video</a>}
+              <a className="btn btn-sm" href={droneUrl(`/api/recordings/${s.id}/export.csv`)} download><FileSpreadsheet size={10} /> CSV</a>
+              <a className="btn btn-sm" href={droneUrl(`/api/recordings/${s.id}/export.json`)} download><FileJson size={10} /> JSON</a>
               <button className="btn btn-sm btn-danger ml-auto" disabled={s.active} onClick={() => void remove(s)}><Trash2 size={10} /></button>
             </div>
           </div>
@@ -166,8 +167,8 @@ export function RecordingsTab() {
           <div className="mb-1 text-[10px] tracking-[0.14em] text-muted">SNAPSHOTS</div>
           <div className="grid grid-cols-3 gap-1">
             {data!.snapshots.slice(0, 9).map((m) => (
-              <a key={m.name} href={`/api/camera/snapshots/${encodeURIComponent(m.name)}`} target="_blank" rel="noreferrer" title={m.name}>
-                <img loading="lazy" src={`/api/camera/snapshots/${encodeURIComponent(m.name)}`} alt={m.name} className="aspect-video w-full rounded-[2px] border border-line object-cover" />
+              <a key={m.name} href={droneUrl(`/api/camera/snapshots/${encodeURIComponent(m.name)}`)} target="_blank" rel="noreferrer" title={m.name}>
+                <img loading="lazy" src={droneUrl(`/api/camera/snapshots/${encodeURIComponent(m.name)}`)} alt={m.name} className="aspect-video w-full rounded-[2px] border border-line object-cover" />
               </a>
             ))}
           </div>

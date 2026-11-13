@@ -3,12 +3,14 @@
 // (/api/camera/webrtc/whep); media flows directly from MediaMTX over ICE/UDP.
 // Uses non-trickle ICE: we wait for gathering to finish before POSTing.
 
+import { droneUrl } from "./drone";
+
 export interface WhepSession {
   pc: RTCPeerConnection;
   close: () => void;
 }
 
-export async function startWhep(video: HTMLVideoElement, endpoint = "/api/camera/webrtc/whep"): Promise<WhepSession> {
+export async function startWhep(video: HTMLVideoElement, endpoint = droneUrl("/api/camera/webrtc/whep")): Promise<WhepSession> {
   const pc = new RTCPeerConnection({ bundlePolicy: "max-bundle" });
   pc.addTransceiver("video", { direction: "recvonly" });
   pc.ontrack = (ev) => {

@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ClockSync, computeSample } from "../services/clock";
 import { emitUnauthorized } from "../services/api";
+import { droneUrl } from "../services/drone";
 import { Ring } from "../lib/ring";
 import type { ImuSample, TelemetryEvent, TelemetryState } from "../types/telemetry";
 
@@ -95,6 +96,17 @@ class TelemetryStore {
     this.ws = null;
   }
 
+  /** Forget everything from the previous drone (called when switching drones). */
+  reset() {
+    this.stop();
+    this.snap = { conn: "closed", state: null, lastMessageAt: null, rttMs: null, offsetMs: 0, reconnectAttempt: 0, events: [], disconnectedSince: null };
+    this.latestImu = null;
+    this.lastImuSeq = -1;
+    this.imuRing.clear();
+    this.clock = new ClockSync();
+    this.flush();
+  }
+
   private onVisible = () => {
     if (document.visibilityState === "visible" && (this.snap.conn === "closed" || this.snap.conn === "stale")) this.reconnectNow();
   };
@@ -114,7 +126,7 @@ class TelemetryStore {
 
   private open() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/ws/telemetry`);
+    const ws = new WebSocket(`${proto}://${location.host}${droneUrl("/ws/telemetry")}`);
     this.ws = ws;
     this.set({ conn: "connecting" }, true);
     ws.onopen = () => {
