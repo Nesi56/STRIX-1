@@ -46,6 +46,24 @@ Open http://127.0.0.1:9000 and sign in with the hub token:
 ./target/release/strix-hub token hub.toml
 ```
 
+### Sign in with an operator PIN
+
+![Operator sign-in](img/hub-login.png)
+
+Set a short PIN on the hub computer (never through the web page):
+
+```bash
+./target/release/strix-hub set-pin hub.toml
+```
+
+Restart the hub; the sign-in page then shows a PIN pad (the keyboard works too). The PIN is 6–8 digits
+(not all the same, not 123456-style runs), stored only as a salted PBKDF2 hash in `data/hub_pin`. Five wrong
+PINs lock sign-in for 1 minute, then 2, 4, 8… up to 15 minutes. The long token still works as a recovery login
+("Use recovery token instead"); `strix-hub clear-pin hub.toml` removes the PIN.
+
+Everything works with no internet: fonts and scripts are bundled, and the hub and drones only talk over
+your local network.
+
 Shortcuts: **Space** on the fleet view stops every drone's camera servo and AI task; inside a console it
 stops that drone (the same keys as before work there).
 

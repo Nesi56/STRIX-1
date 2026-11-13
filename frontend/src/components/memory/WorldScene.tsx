@@ -271,7 +271,7 @@ export default function WorldScene({ mem, serverNow, fitNonce }: Props) {
         );
       })}
       <Grid position={[0, floorY, 0]} args={[10, 10]} cellSize={0.1} cellThickness={0.5} cellColor="#1c2a21"
-        sectionSize={0.5} sectionThickness={1} sectionColor="#1e6e45" fadeDistance={9} infiniteGrid />
+        sectionSize={0.5} sectionThickness={1} sectionColor="#1f5670" fadeDistance={9} infiniteGrid />
       <OrbitControls makeDefault enablePan minDistance={0.25} maxDistance={30} />
       <Fitter placed={placed} fitKey={fitKey} />
     </Canvas>

@@ -22,6 +22,8 @@ sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.2"
 subtle = "2"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+rpassword = "7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

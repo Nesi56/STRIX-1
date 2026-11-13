@@ -20,7 +20,7 @@ function Arm({ angle, front }: { angle: number; front: boolean }) {
     <group>
       <mesh position={[x / 2, 0, z / 2]} rotation={[0, -angle, 0]}>
         <boxGeometry args={[0.16, 0.06, ARM]} />
-        <meshStandardMaterial color={front ? "#1e6e45" : "#2b322d"} metalness={0.3} roughness={0.6} />
+        <meshStandardMaterial color={front ? "#1f5670" : "#2b322d"} metalness={0.3} roughness={0.6} />
       </mesh>
       <mesh position={[x, 0.09, z]}>
         <cylinderGeometry args={[0.13, 0.13, 0.16, 24]} />
@@ -28,7 +28,7 @@ function Arm({ angle, front }: { angle: number; front: boolean }) {
       </mesh>
       <mesh position={[x, 0.2, z]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={[0.635, 40]} />
-        <meshStandardMaterial color={front ? "#3ddc84" : "#ff4d5e"} transparent opacity={0.18} side={THREE.DoubleSide} />
+        <meshStandardMaterial color={front ? "#6fd3ff" : "#ff4d5e"} transparent opacity={0.18} side={THREE.DoubleSide} />
       </mesh>
     </group>
   );
@@ -69,13 +69,13 @@ export function Quad({ smoothing, lockYaw, cameraTilt }: { smoothing: boolean; l
         </mesh>
         <mesh position={[0, 0, -0.08]} rotation={[Math.PI / 2, 0, 0]}>
           <cylinderGeometry args={[0.06, 0.06, 0.06, 20]} />
-          <meshStandardMaterial color="#3ddc84" emissive="#0f4a2c" />
+          <meshStandardMaterial color="#6fd3ff" emissive="#0e3446" />
         </mesh>
       </group>
       {/* nose arrow */}
       <mesh position={[0, 0.02, -1.0]} rotation={[-Math.PI / 2, 0, 0]}>
         <coneGeometry args={[0.1, 0.3, 3]} />
-        <meshStandardMaterial color="#3ddc84" emissive="#1e6e45" />
+        <meshStandardMaterial color="#6fd3ff" emissive="#1f5670" />
       </mesh>
       <axesHelper args={[0.9]} />
     </group>
@@ -97,7 +97,7 @@ const DroneScene = forwardRef<DroneSceneHandle, { smoothing: boolean; lockYaw: b
         <Quad {...props} />
         {/* Reference horizon plane and world axes (fixed, not geographic) */}
         <Grid position={[0, -0.6, 0]} args={[20, 20]} cellSize={0.5} cellThickness={0.5} cellColor="#1c2a21"
-          sectionSize={2.5} sectionThickness={1} sectionColor="#1e6e45" fadeDistance={22} infiniteGrid />
+          sectionSize={2.5} sectionThickness={1} sectionColor="#1f5670" fadeDistance={22} infiniteGrid />
         <axesHelper args={[1.6]} position={[0, -0.6, 0]} />
         <OrbitControls ref={controls} makeDefault enablePan={false} minDistance={2} maxDistance={12} />
       </Canvas>

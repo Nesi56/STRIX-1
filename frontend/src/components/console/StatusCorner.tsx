@@ -3,7 +3,7 @@ import { useTelemetrySnapshot } from "../../hooks/useTelemetry";
 import { signed } from "../../lib/format";
 
 type Tone = "ok" | "warn" | "crit" | "synth" | "dim";
-const DOT: Record<Tone, string> = { ok: "bg-accent shadow-[0_0_6px_#3ddc84]", warn: "bg-warn", crit: "bg-crit", synth: "bg-synth", dim: "bg-dim" };
+const DOT: Record<Tone, string> = { ok: "bg-accent shadow-[0_0_6px_#6fd3ff]", warn: "bg-warn", crit: "bg-crit", synth: "bg-synth", dim: "bg-dim" };
 const TXT: Record<Tone, string> = { ok: "text-text", warn: "text-warn", crit: "text-crit", synth: "text-synth", dim: "text-muted" };
 
 function Row({ label, tone, value, hint, title }: { label: string; tone: Tone; value: ReactNode; hint?: string | null; title?: string }) {

@@ -115,6 +115,7 @@ token_env = "STRIX_TEST_UNSET_TOKEN_VAR"
         drones,
         http: reqwest::Client::new(),
         qwen_status: RwLock::new(Value::Null),
+        pin: pin::PinStore::new(Some(pin::hash_pin("482915", 1_000))),
     });
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = l.local_addr().unwrap();
@@ -336,3 +337,60 @@ async fn websocket_passthrough() {
 }
 
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+#[tokio::test]
+async fn pin_login() {
+    let d = fake_drone(Arc::new(AtomicUsize::new(0))).await;
+    let h = hub(d, "STRIX_TEST_TOKEN_C").await;
+    let c = reqwest::Client::new();
+    let base = format!("http://{h}");
+    let s: Value = c
+        .get(format!("{base}/api/auth/status"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(s["pin_enabled"], true);
+    let r = c
+        .post(format!("{base}/api/auth/login"))
+        .json(&json!({"pin": "111112"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+    let v: Value = r.json().await.unwrap();
+    assert_eq!(v["error"]["tries_left"], 4);
+    let r = c
+        .post(format!("{base}/api/auth/login"))
+        .json(&json!({"pin": "482915"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let cookie = r.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        c.get(format!("{base}/api/hub/fleet"))
+            .header("cookie", cookie)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    // the long token still works as a recovery login
+    let r = c
+        .post(format!("{base}/api/auth/login"))
+        .json(&json!({"token": HUB_TOKEN}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+}

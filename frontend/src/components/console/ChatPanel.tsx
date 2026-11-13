@@ -176,9 +176,9 @@ function Chat() {
           </div>
         )}
         {turns.map((t) => t.role === "user" ? (
-          <div key={t.id} className="ml-10 rounded-[3px] border border-line-2 bg-[#171c18] px-2 py-1.5">{t.text}</div>
+          <div key={t.id} className="ml-10 rounded-[3px] border border-line-2 bg-[#121a21] px-2 py-1.5">{t.text}</div>
         ) : (
-          <div key={t.id} className="group mr-4 rounded-[3px] border border-line bg-[#0d100e] px-2 py-1.5">
+          <div key={t.id} className="group mr-4 rounded-[3px] border border-line bg-[#0a0e11] px-2 py-1.5">
             <div className="mb-0.5 flex items-center gap-1.5 text-[10px] tracking-wider text-accent">
               {t.auto ? <Eye size={11} /> : <Bot size={11} />}
               <span>QWEN</span>

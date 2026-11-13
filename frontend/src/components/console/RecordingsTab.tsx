@@ -145,7 +145,7 @@ export function RecordingsTab() {
       {sessions.map((s) => {
         const video = s.metadata.video as string | undefined;
         return (
-          <div key={s.id} className="rounded-[3px] border border-line bg-[#0d100e] p-1.5">
+          <div key={s.id} className="rounded-[3px] border border-line bg-[#0a0e11] p-1.5">
             <div className="flex items-center gap-1.5">
               <span className="truncate text-text">{s.name}</span>
               {s.active ? <Tag tone="crit">REC</Tag> : s.synthetic ? <Tag tone="synth">SYNTH</Tag> : null}

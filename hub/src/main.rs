@@ -10,6 +10,7 @@
 mod auth;
 mod config;
 mod fleet;
+mod pin;
 mod proxy;
 mod qwen;
 
@@ -41,6 +42,7 @@ pub struct AppState {
     pub drones: Vec<Arc<Drone>>,
     pub http: reqwest::Client,
     pub qwen_status: RwLock<Value>,
+    pub pin: pin::PinStore,
 }
 
 pub fn api_error(status: StatusCode, code: &str, message: &str) -> Response {
@@ -64,12 +66,20 @@ async fn hub_info() -> Json<Value> {
 }
 
 async fn auth_status(State(st): State<Arc<AppState>>, req: Request) -> Json<Value> {
-    Json(json!({ "auth_enabled": true, "authenticated": st.auth.is_authenticated(req.headers()) }))
+    Json(json!({
+        "auth_enabled": true,
+        "authenticated": st.auth.is_authenticated(req.headers()),
+        "pin_enabled": st.pin.enabled(),
+        "locked_for_s": st.pin.locked_for(),
+    }))
 }
 
 #[derive(Deserialize)]
 struct Login {
-    token: String,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    pin: Option<String>,
 }
 
 async fn login(
@@ -95,10 +105,47 @@ async fn login(
         return api_error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation_error",
-            "send {\"token\": \"...\"}",
+            "send {\"pin\": \"...\"} or {\"token\": \"...\"}",
         );
     };
-    if !st.auth.check_token(&l.token) {
+    if let Some(pin) = l.pin {
+        // PBKDF2 is slow on purpose; keep it off the async workers.
+        let st2 = st.clone();
+        let res = tokio::task::spawn_blocking(move || st2.pin.attempt(pin.trim())).await;
+        match res {
+            Ok(Ok(())) => {}
+            Ok(Err(pin::PinError::NotSet)) => {
+                return api_error(
+                    StatusCode::CONFLICT,
+                    "pin_not_set",
+                    "no PIN set: run strix-hub set-pin on the hub computer",
+                )
+            }
+            Ok(Err(pin::PinError::Locked(s))) => {
+                tracing::warn!(client = %addr.ip(), "PIN sign-in locked for {s} s");
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({ "error": { "code": "locked", "message": format!("too many wrong PINs; locked for {s} s"), "locked_for_s": s } })),
+                )
+                    .into_response();
+            }
+            Ok(Err(pin::PinError::Wrong { tries_left })) => {
+                tracing::warn!(client = %addr.ip(), "wrong PIN");
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({ "error": { "code": "invalid_pin", "message": format!("wrong PIN; {tries_left} tries before lockout"), "tries_left": tries_left } })),
+                )
+                    .into_response();
+            }
+            Err(_) => {
+                return api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    "internal error",
+                )
+            }
+        }
+    } else if !l.token.as_deref().is_some_and(|t| st.auth.check_token(t)) {
         return api_error(
             StatusCode::UNAUTHORIZED,
             "invalid_token",
@@ -262,7 +309,7 @@ async fn main() {
         .init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!("strix-hub {VERSION}\n\n  strix-hub [hub.toml]            run the hub\n  strix-hub token [hub.toml]      print the dashboard access token\n  strix-hub qwen-key [hub.toml]   print the key drones use for the shared Qwen");
+        println!("strix-hub {VERSION}\n\n  strix-hub [hub.toml]            run the hub\n  strix-hub token [hub.toml]      print the dashboard access token (recovery login)\n  strix-hub set-pin [hub.toml]    set the operator PIN used to sign in\n  strix-hub clear-pin [hub.toml]  remove the PIN\n  strix-hub qwen-key [hub.toml]   print the key drones use for the shared Qwen");
         return;
     }
     let path = config_path(&args);
@@ -277,6 +324,29 @@ async fn main() {
             .0
     });
     match args.first().map(String::as_str) {
+        Some("set-pin") => {
+            let pin_file = cfg.data_dir.join("hub_pin");
+            let a = rpassword::prompt_password("New operator PIN (6-8 digits): ")
+                .unwrap_or_else(|e| fail(e));
+            if let Err(why) = pin::check_strength(a.trim()) {
+                fail(format!("PIN not set: {why}"));
+            }
+            let b = rpassword::prompt_password("Type it again: ").unwrap_or_else(|e| fail(e));
+            if a.trim() != b.trim() {
+                fail("PIN not set: the two entries differ");
+            }
+            pin::write_pin_file(&pin_file, a.trim()).unwrap_or_else(|e| fail(e));
+            println!(
+                "PIN saved in {} (hashed). Restart the hub to use it.",
+                pin_file.display()
+            );
+            return;
+        }
+        Some("clear-pin") => {
+            let _ = std::fs::remove_file(cfg.data_dir.join("hub_pin"));
+            println!("PIN removed; sign in with the access token (strix-hub token).");
+            return;
+        }
         Some("token") => {
             println!("{token}");
             return;
@@ -320,6 +390,7 @@ async fn main() {
         tracing::warn!("no [[drone]] entries in {}", path.display());
     }
     let listen = cfg.listen.clone();
+    let pin_path = cfg.data_dir.join("hub_pin");
     let qwen_cfg = cfg.qwen.clone();
     let st = Arc::new(AppState {
         auth: Auth::new(token, cfg.session_ttl_hours),
@@ -327,6 +398,7 @@ async fn main() {
         drones,
         http: http.clone(),
         qwen_status: RwLock::new(Value::Null),
+        pin: pin::PinStore::load(&pin_path),
     });
 
     if let (Some(q), Some(key)) = (qwen_cfg, qwen_key) {

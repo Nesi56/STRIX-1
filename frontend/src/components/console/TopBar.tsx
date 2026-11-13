@@ -4,6 +4,7 @@ import { useTelemetry } from "../../hooks/useTelemetry";
 import { errorMessage, post } from "../../services/api";
 import { fmtDuration } from "../../lib/format";
 import { useToast } from "../common/toast";
+import { BrandMark } from "../common/Brand";
 
 export async function emergencyStop(toast: (t: string, tone?: "info" | "ok" | "warn" | "error") => void) {
   try {
@@ -49,16 +50,11 @@ export function TopBar({ nav }: { nav?: React.ReactNode } = {}) {
   };
 
   return (
-    <header className="z-30 shrink-0 border-b border-line bg-[#0d100e]">
+    <header className="z-30 shrink-0 border-b border-line bg-[#0a0e11]">
       <div className="flex flex-wrap items-center gap-2 px-3 py-2 sm:gap-3">
         <div className="flex shrink-0 items-center gap-2">
-          <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden>
-            <rect x="2" y="2" width="8" height="8" rx="1" fill="none" stroke="#3ddc84" strokeWidth="2" />
-            <rect x="14" y="2" width="8" height="8" rx="1" fill="#3ddc84" />
-            <rect x="2" y="14" width="8" height="8" rx="1" fill="#3ddc84" />
-            <rect x="14" y="14" width="8" height="8" rx="1" fill="none" stroke="#3ddc84" strokeWidth="2" />
-          </svg>
-          <span className="text-[17px] font-bold tracking-[0.12em] text-text">STRIX-1</span>
+          <BrandMark />
+          <span className="text-[18px] font-bold tracking-[0.22em] text-text">STRIX-1</span>
           {!nav && <span className="hidden text-[10px] tracking-[0.14em] text-dim md:inline">AI CAMERA DRONE · QWEN + YOLO</span>}
         </div>
         {nav}
