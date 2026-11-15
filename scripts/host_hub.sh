@@ -14,10 +14,24 @@ BIN="$HUB/target/release/strix-hub"
 OS="$(uname -s)"
 UNIT="$HOME/.config/systemd/user/strix-hub.service"
 PLIST="$HOME/Library/LaunchAgents/com.strix1.hub.plist"
+PIDFILE="$HUB/data/hub.pid"
 say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+has_systemd() { [ -d /run/systemd/system ] && systemctl --user show-environment >/dev/null 2>&1; }
+is_wsl() { grep -qi microsoft /proc/version 2>/dev/null; }
+
+# Hub started in the background (systems without systemd, e.g. WSL).
+stop_bg() {
+  if [ -f "$PIDFILE" ]; then
+    pid="$(cat "$PIDFILE")"
+    if ps -p "$pid" -o comm= 2>/dev/null | grep -q strix-hub; then kill "$pid" 2>/dev/null || true; sleep 1; fi
+    rm -f "$PIDFILE"
+  fi
+}
+
 stop_service() {
+  stop_bg
   if [ "$OS" = Linux ] && [ -f "$UNIT" ]; then
     systemctl --user disable --now strix-hub 2>/dev/null || true
     rm -f "$UNIT"; systemctl --user daemon-reload 2>/dev/null || true
@@ -37,6 +51,7 @@ command -v cargo >/dev/null || die "Rust is not installed: see https://rustup.rs
 command -v npm >/dev/null || die "Node.js 20+ is not installed: see https://nodejs.org"
 
 # Stop a running copy so the rebuilt binary can replace it.
+stop_bg
 if [ "$OS" = Linux ] && [ -f "$UNIT" ]; then systemctl --user stop strix-hub 2>/dev/null || true; fi
 if [ "$OS" = Darwin ] && [ -f "$PLIST" ]; then launchctl unload "$PLIST" 2>/dev/null || true; fi
 
@@ -85,8 +100,21 @@ fi
 
 if [ "${1:-}" = --no-service ]; then
   say "Done. Start it with:  cd $HUB && $BIN hub.toml"
+elif [ "$OS" = Linux ] && ! has_systemd; then
+  # No systemd (WSL by default, some containers): run it in the background instead.
+  mkdir -p data
+  nohup "$BIN" hub.toml >> data/hub.log 2>&1 &
+  echo $! > "$PIDFILE"
+  sleep 1
+  ps -p "$(cat "$PIDFILE")" >/dev/null 2>&1 || die "the hub did not start; see $HUB/data/hub.log"
+  say "Running in the background. Log: $HUB/data/hub.log   Stop: scripts/host_hub.sh --stop"
+  say "It will not start by itself after a reboot: run scripts/host_hub.sh again."
+  if is_wsl; then
+    say "To make it start by itself on WSL, turn on systemd once:"
+    echo "    printf '[boot]\\nsystemd=true\\n' | sudo tee -a /etc/wsl.conf"
+    echo "    then in Windows PowerShell: wsl --shutdown   (reopen Ubuntu and run scripts/host_hub.sh again)"
+  fi
 elif [ "$OS" = Linux ]; then
-  command -v systemctl >/dev/null || die "no systemd here: use --no-service and start it yourself"
   mkdir -p "$(dirname "$UNIT")"
   cat > "$UNIT" <<EOF
 [Unit]
