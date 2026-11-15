@@ -19,6 +19,16 @@ navigation commands. Each pilot flies their own drone.
 
 ## Run it
 
+**Quickest (Linux or macOS):** one command builds everything, asks for your drones and a PIN the first
+time, and makes the hub start by itself:
+
+```bash
+scripts/host_hub.sh
+```
+
+Re-run it after `git pull` to update (your settings are kept). `scripts/host_hub.sh --stop` stops it and
+removes the autostart. The manual steps follow.
+
 You need Rust ([rustup.rs](https://rustup.rs)) and Node 20+ on the laptop.
 
 ```bash
