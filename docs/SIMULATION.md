@@ -40,15 +40,24 @@ messages, and `tests/test_safety_static.py` keeps every other file from talking 
 
 ## 1. Set up (once)
 
-Ubuntu 22.04 or 24.04. On Windows 11, use Ubuntu in **WSL2** (Gazebo's window then appears through WSLg).
-About 30 minutes and 10 GB of disk:
+About 30-60 minutes and 10 GB of disk:
 
 ```bash
 scripts/sim/setup_px4_gz.sh
 ```
 
-It downloads PX4 v1.16.2 into `~/PX4-Autopilot`, installs Gazebo Harmonic with PX4's own installer, builds PX4,
-and prepares STRIX-1 (MAVLink support, YOLO model, dashboard, hub). Set `PX4_DIR` to use another folder.
+It picks the right route for your Linux:
+
+* **Ubuntu 22.04 / 24.04** (also Ubuntu in WSL2 on Windows 11): Gazebo Harmonic from its apt packages, installed
+  by PX4's own installer (asks for sudo).
+* **Any other Linux** (Arch, Artix, Manjaro, Fedora, Debian, ...): a self-contained conda-forge environment in
+  `~/.local/share/strix-sim` with Gazebo Harmonic, compilers and Python. No sudo, nothing installed system-wide;
+  delete that folder to remove it. Add `--conda` to use this route on Ubuntu too. Because conda-forge's libraries
+  are newer than Ubuntu's, the script makes three small build edits to your PX4 copy (C++17, one warning,
+  and it skips the optional optical-flow plugin); they are printed in the script.
+
+Both download PX4 v1.16.2 into `~/PX4-Autopilot` (set `PX4_DIR` to change it), build it, and prepare STRIX-1
+(MAVLink support, YOLO model, dashboard, hub). The launcher remembers which route you used.
 
 ## 2. Start a fleet
 
@@ -71,8 +80,8 @@ show the token with `hub/target/release/strix-hub token hub/sim.toml`). Logs are
 
 ## 3. Fly
 
-The easiest way is **[QGroundControl](https://qgroundcontrol.com)**: it connects to every simulated drone by
-itself. Pick a drone at the top, press **Takeoff**, then click the map and **Go to location**.
+The easiest way is **[QGroundControl](https://qgroundcontrol.com)** (on Arch/Artix: its AppImage, or the
+`qgroundcontrol` AUR package): it connects to every simulated drone by itself. Pick a drone at the top, press **Takeoff**, then click the map and **Go to location**.
 
 From a terminal, PX4's own console works too:
 
@@ -137,10 +146,12 @@ supported yet.
 | Very slow, choppy video | `--light` and fewer drones (see above) |
 | People/cars missing | No internet for Gazebo Fuel on the first run (`data/sim/logs/objects.log`) |
 | PX4: "Arming denied" | Open QGroundControl; PX4 needs a ground station to arm |
+| Gazebo (conda route) stops with a `GLIBCXX_…` error | Your system's graphics drivers need a newer C++ library than the environment's. Start with the system one preloaded: `LD_PRELOAD=/usr/lib/libstdc++.so.6 scripts/sim/run_fleet.sh` |
 
 ## What was tested
 
-The integration was run end to end with PX4 v1.16.2 and Gazebo Harmonic (gz-sim 8.10) using software rendering:
+The integration was run end to end with PX4 v1.16.2 and Gazebo Harmonic (gz-sim 8.10, the conda route of the setup
+script) using software rendering:
 2 and 3 drones, MAVLink telemetry (IMU, GPS, battery, flight state), the Gazebo camera bridge (1280×720,
 115° field of view), gimbal pointing (commanded −30°, PX4 reported −30°), a take-off of two drones from PX4's
 console with STRIX-1 following read-only, and the hub's fleet view and map. Not tested there: QGroundControl

@@ -50,6 +50,9 @@ done
 
 # --------------------------------------------------------------- checks
 PX4_DIR="${PX4_DIR:-$(cat "$SIM/px4_dir" 2>/dev/null || echo "$HOME/PX4-Autopilot")}"
+# Gazebo from the self-contained conda environment (non-Ubuntu setup), if that is how it was installed.
+GZ_PREFIX="${STRIX_SIM_ENV:-$(cat "$SIM/gz_env" 2>/dev/null || true)}"
+[ -n "$GZ_PREFIX" ] && [ -x "$GZ_PREFIX/bin/gz" ] && export PATH="$GZ_PREFIX/bin:$PATH"
 PX4_BIN="$PX4_DIR/build/px4_sitl_default/bin/px4"
 GZ_ENV="$PX4_DIR/build/px4_sitl_default/rootfs/gz_env.sh"
 [ -x "$PX4_BIN" ] || die "PX4 SITL not built in $PX4_DIR: run scripts/sim/setup_px4_gz.sh first (or set PX4_DIR)"
@@ -61,11 +64,11 @@ PY="$REPO/backend/.venv/bin/python"
 "$PY" -c "import pymavlink" 2>/dev/null || die "pymavlink missing: $PY -m pip install -r backend/requirements-sim.txt"
 GZ_PY="${STRIX_SIM_GZ_PYTHON:-}"
 if [ -z "$GZ_PY" ]; then
-  for c in /usr/bin/python3 "$(command -v python3)"; do
+  for c in ${GZ_PREFIX:+"$GZ_PREFIX/bin/python3"} /usr/bin/python3 "$(command -v python3)"; do
     if [ -x "$c" ] && "$c" -c "import gz.transport13, gz.msgs10" 2>/dev/null; then GZ_PY="$c"; break; fi
   done
 fi
-[ -n "$GZ_PY" ] || warn "no Python with Gazebo's bindings: cameras will be off (sudo apt install python3-gz-transport13 python3-gz-msgs10)"
+[ -n "$GZ_PY" ] || warn "no Python with Gazebo's bindings: cameras will be off (Ubuntu: sudo apt install python3-gz-transport13 python3-gz-msgs10; other Linux: rerun scripts/sim/setup_px4_gz.sh)"
 HUB_BIN="$REPO/hub/target/release/strix-hub"
 if [ ! -x "$HUB_BIN" ]; then
   command -v cargo >/dev/null || die "the hub is not built and Rust is missing: see https://rustup.rs"
