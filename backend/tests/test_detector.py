@@ -164,3 +164,34 @@ def test_detector_slows_down_when_hot_or_qwen_busy(tmp_path):
     assert d.period() == pytest.approx(1 / 1.5) and "77" in d.slowed
     load["v"] = (82.0, True)
     assert d.period() == pytest.approx(1.0)
+
+
+def test_custom_trained_model_uses_its_own_class_names(tmp_path):
+    """Your own YOLO, e.g. trained for search and rescue on life jackets, kayaks and tents: STRIX-1 reports
+    its class names, and distances only for classes you gave a typical size."""
+    from app.services.detector import canonical_label, labels_for_model
+    from app.services.detector_service import parse_size_priors
+
+    (tmp_path / "sar.onnx").write_bytes(b"x")
+    (tmp_path / "sar.labels.txt").write_text("life jacket\nkayak\ntent\n")
+    labels = labels_for_model(tmp_path / "sar.onnx")
+    assert labels == ["life jacket", "kayak", "tent"]
+
+    det = OnnxDetector.__new__(OnnxDetector)  # skip loading a real network
+    det.path = tmp_path / "sar.onnx"
+    det.raw_count = 3
+    det.labels = [canonical_label(n) for n in labels]
+    uniq = list(dict.fromkeys(det.labels))
+    det._group = [uniq.index(l) for l in det.labels]
+    det.conf, det.iou, det.input_hw, det.format = 0.3, 0.45, (416, 416), "yolov8"
+    out = np.zeros((1, 4 + 3, 3549), np.float32)  # YOLO11/YOLOv8 head: 4 box values + 3 classes
+    out[0, :4, 5] = [200, 200, 60, 40]
+    out[0, 4 + 1, 5] = 0.88  # kayak
+    det._forward = lambda blob: out
+    res = det.detect(np.zeros((416, 416, 3), np.uint8))
+    assert [label for label, _, _ in res] == ["kayak"]
+
+    priors = parse_size_priors("kayak=0.45, tents=1.2, boat=3", labels)
+    assert priors == {"kayak": 0.45, "tent": 1.2}  # "boat" is not one of this model's classes: ignored
+    assert "life jacket" not in priors  # no typical size given → no distance, never guessed
+    assert parse_size_priors("cup=0.11, kayak=1") == {"cup": 0.11}  # default: the standard COCO classes

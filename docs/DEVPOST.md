@@ -135,7 +135,7 @@ Distances come from a pinhole camera model: `distance ≈ f · H / h`, with the 
 ## Try it out
 
 - Code: https://github.com/Nesi56/STRIX-1
-- Run the demo without hardware: `scripts/run_mock.sh` (see docs/JUDGES.md)
+- Run the demo without hardware: `scripts/run_mock.sh` (see the README)
 
 ## Image gallery (suggested)
 

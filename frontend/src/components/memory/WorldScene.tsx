@@ -60,7 +60,7 @@ function Label({ lines, color, position, lift = 0 }: { lines: [string, string?];
     ctx.font = "700 54px ui-monospace, Menlo, monospace";
     ctx.fillText(lines[0], 0, lines[1] ? -28 / scale : 0);
     if (lines[1]) {
-      ctx.fillStyle = "#e8eef0";
+      ctx.fillStyle = "#ededee";
       ctx.font = "500 42px ui-monospace, Menlo, monospace";
       ctx.fillText(lines[1], 0, 30 / scale);
     }
@@ -120,7 +120,7 @@ function Container({ p, contains }: { p: Placed; contains: boolean }) {
   return (
     <group position={p.pos}>
       <mesh geometry={geom} renderOrder={2}>
-        <meshStandardMaterial color="#d23c46" transparent opacity={p.o.memory === "seen" ? (contains ? 0.28 : 0.55) : 0.16}
+        <meshStandardMaterial color="#df474e" transparent opacity={p.o.memory === "seen" ? (contains ? 0.28 : 0.55) : 0.16}
           depthWrite={false} side={THREE.DoubleSide} roughness={0.4} />
       </mesh>
       <lineSegments geometry={edges} renderOrder={3}>
@@ -138,7 +138,7 @@ function Thing({ p }: { p: Placed }) {
     if (mat.current && kind === "hidden") mat.current.emissiveIntensity = 0.75 + 0.5 * Math.sin(clock.elapsedTime * 5);
   });
   const round = ROUND.has(p.o.label);
-  const body = p.o.label === "sports ball" ? "#ff8c1a" : p.o.label === "person" ? "#5a7bd8" : "#8fa3b8";
+  const body = p.o.label === "sports ball" ? "#d6a441" : p.o.label === "person" ? "#8a8b90" : "#8a8b90";
   return (
     <group position={p.pos}>
       <mesh renderOrder={1}>
@@ -201,10 +201,10 @@ function ViewCone({ halfH, halfV, length }: { halfH: number; halfV: number; leng
   return (
     <group>
       <lineSegments geometry={geom}>
-        <lineBasicMaterial color="#39ff7a" transparent opacity={0.45} />
+        <lineBasicMaterial color="#ededee" transparent opacity={0.45} />
       </lineSegments>
       <mesh geometry={face}>
-        <meshBasicMaterial color="#39ff7a" transparent opacity={0.06} side={THREE.DoubleSide} depthWrite={false} />
+        <meshBasicMaterial color="#ededee" transparent opacity={0.06} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
     </group>
   );
@@ -245,10 +245,10 @@ export default function WorldScene({ mem, serverNow, fitNonce }: Props) {
   const tilt = telemetry.snap.state?.servo?.tilt_deg ?? null;
   return (
     <Canvas camera={{ position: [0.6, 0.8, 1.2], fov: 45, near: 0.01, far: 100 }} dpr={[1, 2]} gl={{ antialias: true }}>
-      <color attach="background" args={["#0a0c0b"]} />
+      <color attach="background" args={["#09090a"]} />
       <ambientLight intensity={0.6} />
       <directionalLight position={[2, 4, 2]} intensity={1.3} />
-      <directionalLight position={[-2, 1.5, -3]} intensity={0.35} color="#9fe7bf" />
+      <directionalLight position={[-2, 1.5, -3]} intensity={0.35} color="#d0d0d2" />
       <group scale={0.1}>
         <Quad smoothing lockYaw={false} cameraTilt={tilt} />
       </group>
@@ -270,8 +270,8 @@ export default function WorldScene({ mem, serverNow, fitNonce }: Props) {
           </group>
         );
       })}
-      <Grid position={[0, floorY, 0]} args={[10, 10]} cellSize={0.1} cellThickness={0.5} cellColor="#1c2a21"
-        sectionSize={0.5} sectionThickness={1} sectionColor="#1f5670" fadeDistance={9} infiniteGrid />
+      <Grid position={[0, floorY, 0]} args={[10, 10]} cellSize={0.1} cellThickness={0.5} cellColor="#202124"
+        sectionSize={0.5} sectionThickness={1} sectionColor="#45464b" fadeDistance={9} infiniteGrid />
       <OrbitControls makeDefault enablePan minDistance={0.25} maxDistance={30} />
       <Fitter placed={placed} fitKey={fitKey} />
     </Canvas>

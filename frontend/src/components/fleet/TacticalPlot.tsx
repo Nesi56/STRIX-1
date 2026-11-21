@@ -21,18 +21,18 @@ export function TacticalPlot({ drones, colors }: { drones: FleetDrone[]; colors:
         <span>Positions</span>
         <span className={simulated ? "!text-synth" : "!text-ok"}>{simulated ? "SIM GPS" : "GPS"}</span>
       </div>
-      <svg viewBox="-112 -112 224 224" className="w-full border border-line bg-[#0a0e11]" role="img"
+      <svg viewBox="-112 -112 224 224" className="w-full border border-line bg-[#0c0c0e]" role="img"
         aria-label={`Map of ${placed.length} drone${placed.length === 1 ? "" : "s"}, ${extent} m to the edge`}>
         {[1, 0.5].map((f) => (
-          <circle key={f} r={R * f} fill="none" stroke="#1c242c" strokeWidth={1} />
+          <circle key={f} r={R * f} fill="none" stroke="#26272b" strokeWidth={1} />
         ))}
-        <line x1={-R} x2={R} y1={0} y2={0} stroke="#1c242c" />
-        <line y1={-R} y2={R} x1={0} x2={0} stroke="#1c242c" />
-        <text x={0} y={-R - 3} textAnchor="middle" fontSize={9} fill="#8593a0" fontFamily="var(--font-mono)">N</text>
-        <text x={R * 0.5 + 2} y={-3} fontSize={7} fill="#55626e" fontFamily="var(--font-mono)">{extent / 2} m</text>
-        <text x={R + 2} y={-3} fontSize={7} fill="#55626e" fontFamily="var(--font-mono)" textAnchor="end">{extent} m</text>
+        <line x1={-R} x2={R} y1={0} y2={0} stroke="#26272b" />
+        <line y1={-R} y2={R} x1={0} x2={0} stroke="#26272b" />
+        <text x={0} y={-R - 3} textAnchor="middle" fontSize={9} fill="#9b9ca1" fontFamily="var(--font-mono)">N</text>
+        <text x={R * 0.5 + 2} y={-3} fontSize={7} fill="#5f6065" fontFamily="var(--font-mono)">{extent / 2} m</text>
+        <text x={R + 2} y={-3} fontSize={7} fill="#5f6065" fontFamily="var(--font-mono)" textAnchor="end">{extent} m</text>
         {pts.map(({ d, e, n }) => {
-          const c = colors[d.id] ?? "#6fd3ff";
+          const c = colors[d.id] ?? "#f4f4f5";
           const x = e * k;
           const y = -n * k;
           const hdg = d.flight?.heading;
@@ -41,12 +41,12 @@ export function TacticalPlot({ drones, colors }: { drones: FleetDrone[]; colors:
             <g key={d.id} transform={`translate(${x.toFixed(1)} ${y.toFixed(1)})`}>
               <title>{`${d.name}: ${d.position!.lat.toFixed(6)}, ${d.position!.lon.toFixed(6)}${alt != null ? `, ${alt.toFixed(1)} m above home` : ""}`}</title>
               {hdg != null ? (
-                <path d="M0 -8 L5.5 6 L0 3 L-5.5 6 Z" fill={c} stroke="#07090b" strokeWidth={1} transform={`rotate(${hdg})`} />
+                <path d="M0 -8 L5.5 6 L0 3 L-5.5 6 Z" fill={c} stroke="#09090a" strokeWidth={1} transform={`rotate(${hdg})`} />
               ) : (
-                <circle r={4.5} fill={c} stroke="#07090b" />
+                <circle r={4.5} fill={c} stroke="#09090a" />
               )}
-              <text x={8} y={-4} fontSize={9} fill="#dfe6ec" fontFamily="var(--font-sans)" fontWeight={600}>{d.name.toUpperCase()}</text>
-              {alt != null && <text x={8} y={6} fontSize={7.5} fill="#8593a0" fontFamily="var(--font-mono)">{alt.toFixed(0)} m</text>}
+              <text x={8} y={-4} fontSize={9} fill="#ededee" fontFamily="var(--font-sans)" fontWeight={600}>{d.name.toUpperCase()}</text>
+              {alt != null && <text x={8} y={6} fontSize={7.5} fill="#9b9ca1" fontFamily="var(--font-mono)">{alt.toFixed(0)} m</text>}
             </g>
           );
         })}

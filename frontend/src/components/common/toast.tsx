@@ -13,7 +13,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), tone === "error" ? 7000 : 3500);
   }, []);
   const tone: Record<Tone, string> = {
-    info: "border-blue/40 text-[#cfe0ff]",
+    info: "border-blue/40 text-[#d6d6d8]",
     ok: "border-ok/40 text-ok",
     warn: "border-warn/40 text-warn",
     error: "border-crit/50 text-crit",

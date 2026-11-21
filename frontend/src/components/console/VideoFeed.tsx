@@ -8,7 +8,7 @@ import { fmtDuration } from "../../lib/format";
 import type { DetectedObject, MemoryState } from "../../types/telemetry";
 import { useToast } from "../common/toast";
 
-const GREEN = "#39ff7a";
+const GREEN = "#ededee";
 
 export function boxLabel(d: DetectedObject): string {
   const r = d.distance_m == null ? "" : d.distance_kind === "upper_bound" ? ` · ≤${d.distance_m.toFixed(1)} m` : ` · ~${d.distance_m.toFixed(1)} m`;

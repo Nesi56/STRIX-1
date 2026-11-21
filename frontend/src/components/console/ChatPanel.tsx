@@ -62,7 +62,7 @@ function YoloTargets() {
     <div className="flex flex-wrap items-center gap-1 border-b border-line px-2.5 py-1.5 text-[11px]">
       <span className="mr-0.5 text-[10px] tracking-[0.12em] text-muted">YOLO LOOKS FOR</span>
       {prompts.map((p) => (
-        <span key={p} className="inline-flex items-center gap-1 rounded-[3px] border border-line-2 bg-[#1a201c] px-1.5 py-[1px]">
+        <span key={p} className="inline-flex items-center gap-1 rounded-[3px] border border-line-2 bg-[#1d1e21] px-1.5 py-[1px]">
           {p}
           <button aria-label={`stop looking for ${p}`} className="text-muted hover:text-crit" onClick={() => void save(prompts.filter((x) => x !== p))}><X size={10} /></button>
         </span>
@@ -176,9 +176,9 @@ function Chat() {
           </div>
         )}
         {turns.map((t) => t.role === "user" ? (
-          <div key={t.id} className="ml-10 rounded-[3px] border border-line-2 bg-[#121a21] px-2 py-1.5">{t.text}</div>
+          <div key={t.id} className="ml-10 rounded-[3px] border border-line-2 bg-[#17181b] px-2 py-1.5">{t.text}</div>
         ) : (
-          <div key={t.id} className="group mr-4 rounded-[3px] border border-line bg-[#0a0e11] px-2 py-1.5">
+          <div key={t.id} className="group mr-4 rounded-[3px] border border-line bg-[#0c0c0e] px-2 py-1.5">
             <div className="mb-0.5 flex items-center gap-1.5 text-[10px] tracking-wider text-accent">
               {t.auto ? <Eye size={11} /> : <Bot size={11} />}
               <span>QWEN</span>

@@ -1,7 +1,7 @@
 // Pure helpers for the object-memory views (3D world, list, video overlay). Unit-tested.
 import type { MemoryObject, MemoryState } from "../types/telemetry";
 
-export const MEM_COLOR = { seen: "#39ff7a", remembered: "#9fb3c8", hidden: "#ffb020" } as const;
+export const MEM_COLOR = { seen: "#ededee", remembered: "#9b9ca1", hidden: "#d6a441" } as const;
 
 /** Seconds out of sight, advanced to "now" on the server clock between memory updates. */
 export function outOfSight(o: MemoryObject, mem: MemoryState, serverNow: number): number {

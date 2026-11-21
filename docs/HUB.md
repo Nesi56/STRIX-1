@@ -1,12 +1,17 @@
 # STRIX-1 Hub: several drones, one self-hosted dashboard
 
-![Fleet view: two drones online, one offline](img/hub-fleet.png)
+![Fleet view: two drones, and the fleet contacts they see together](img/hub-fleet.png)
 
 The hub is a small Rust program (`hub/`) that runs on the laptop you bring to the field. It shows every
 STRIX-1 drone on one screen (live camera, attitude, temperature, servo, what each one sees and remembers)
 and opens any drone's full console with one click. It is **advisory only**, like the rest of STRIX-1: it
 forwards the drones' existing commands (camera servo, memory, chat) and never sends flight, motor or
 navigation commands. Each pilot flies their own drone.
+
+**Fleet contacts** (left side of the fleet view) is what the drones see together: every drone's current
+YOLO detections merged by object class, with how many, which drones see each one, and the nearest estimated
+distance. People are listed first. To teach the whole fleet your own objects, see
+[CUSTOM_MODEL.md](CUSTOM_MODEL.md).
 
 ```
  browser ──► hub (laptop, Rust) ──► drone Alpha (Pi 5, STRIX-1 service)

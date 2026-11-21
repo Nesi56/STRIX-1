@@ -36,8 +36,18 @@ export interface FleetDrone {
   sim: { kind: string; label: string | null; model: string | null } | null;
 }
 
+/** One object class the whole fleet sees right now, merged across drones (observation only). */
+export interface FleetContact {
+  label: string;
+  count: number;
+  drones: { id: string; name: string }[];
+  /** Nearest estimated range from the drone that sees it, or null when no drone has a range. */
+  nearest_m: number | null;
+}
+
 export interface FleetResponse {
   version: string;
   drones: FleetDrone[];
   qwen: { state: string; relay: string | null } | null;
+  contacts?: FleetContact[];
 }

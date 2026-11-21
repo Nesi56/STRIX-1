@@ -128,7 +128,7 @@ export function Empty({ children }: { children: ReactNode }) {
 
 export function Notice({ tone = "info", children }: { tone?: "info" | "warn" | "crit" | "synth"; children: ReactNode }) {
   const t = {
-    info: "border-blue/30 bg-blue/5 text-[#b9cff5]",
+    info: "border-blue/30 bg-blue/5 text-[#c3c4c7]",
     warn: "border-warn/30 bg-warn/5 text-warn",
     crit: "border-crit/40 bg-crit/10 text-crit",
     synth: "border-synth/40 bg-synth/10 text-synth",

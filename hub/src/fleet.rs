@@ -230,6 +230,61 @@ pub fn summarize(cfg: &DroneConfig, live: &Live, token_error: Option<&str>) -> V
     })
 }
 
+/// One object a drone is seeing right now, tagged with which drone saw it. Advisory only:
+/// this is a shared observation picture, never a target list — STRIX-1 commands no weapons or flight.
+#[derive(Clone)]
+pub struct Sighting {
+    pub label: String,
+    pub drone_id: String,
+    pub drone_name: String,
+    pub range_m: Option<f64>,
+}
+
+/// Merge every online drone's current detections into one fleet contact list: each distinct object
+/// class, how many of it the whole fleet sees, which drones see it, and the nearest estimated range.
+/// People come first (in search and rescue they matter most), then the most common classes.
+pub fn fleet_contacts(sightings: &[Sighting]) -> Vec<Value> {
+    let mut by_label: Vec<(String, Vec<&Sighting>)> = Vec::new();
+    for s in sightings {
+        match by_label.iter_mut().find(|(l, _)| *l == s.label) {
+            Some((_, v)) => v.push(s),
+            None => by_label.push((s.label.clone(), vec![s])),
+        }
+    }
+    let mut out: Vec<Value> = by_label
+        .into_iter()
+        .map(|(label, group)| {
+            let mut drones: Vec<Value> = Vec::new();
+            for s in &group {
+                if !drones
+                    .iter()
+                    .any(|d| d["id"] == Value::String(s.drone_id.clone()))
+                {
+                    drones.push(json!({ "id": s.drone_id, "name": s.drone_name }));
+                }
+            }
+            let nearest = group
+                .iter()
+                .filter_map(|s| s.range_m)
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            json!({
+                "label": label,
+                "count": group.len(),
+                "drones": drones,
+                "nearest_m": nearest.map(|v| (v * 10.0).round() / 10.0),
+            })
+        })
+        .collect();
+    let is_person = |v: &Value| v["label"] == Value::String("person".into());
+    out.sort_by(|a, b| {
+        is_person(b)
+            .cmp(&is_person(a))
+            .then_with(|| b["count"].as_u64().cmp(&a["count"].as_u64()))
+            .then_with(|| a["label"].as_str().cmp(&b["label"].as_str()))
+    });
+    out
+}
+
 impl Drone {
     pub fn new(cfg: DroneConfig) -> Drone {
         let token = crate::config::drone_token(&cfg);
@@ -247,6 +302,32 @@ impl Drone {
             &live,
             self.token.as_ref().err().map(String::as_str),
         )
+    }
+
+    /// What this drone is seeing right now (empty unless it is online). Advisory observation only.
+    pub fn sightings(&self) -> Vec<Sighting> {
+        let live = self.live.read().unwrap();
+        if !live.is_online() {
+            return Vec::new();
+        }
+        let t = Value::Object(live.tele.clone());
+        let Some(dets) = t
+            .pointer("/detections/detections")
+            .and_then(Value::as_array)
+        else {
+            return Vec::new();
+        };
+        dets.iter()
+            .filter_map(|d| {
+                let label = d.get("label").and_then(Value::as_str)?.to_string();
+                Some(Sighting {
+                    label,
+                    drone_id: self.cfg.id.clone(),
+                    drone_name: self.cfg.display_name(),
+                    range_m: d.get("distance_m").and_then(Value::as_f64),
+                })
+            })
+            .collect()
     }
 
     fn set_error(&self, e: String) {
@@ -406,6 +487,53 @@ mod tests {
         // no fix → no position at all
         l.absorb(&json!({"type": "telemetry", "flight": {"connected": true, "position": {"available": false, "message": "GPS: 2D fix"}}}));
         assert_eq!(summarize(&cfg(), &l, None)["position"], Value::Null);
+    }
+
+    #[test]
+    fn contacts_merge_what_every_drone_sees() {
+        let s = |label: &str, id: &str, r: Option<f64>| Sighting {
+            label: label.into(),
+            drone_id: id.into(),
+            drone_name: id.to_uppercase(),
+            range_m: r,
+        };
+        let c = fleet_contacts(&[
+            s("car", "alpha", Some(20.0)),
+            s("person", "alpha", Some(12.4)),
+            s("person", "bravo", Some(8.04)),
+            s("person", "bravo", None),
+            s("car", "alpha", Some(31.0)),
+            s("cup", "bravo", None),
+        ]);
+        assert_eq!(c[0]["label"], "person", "people first");
+        assert_eq!(c[0]["count"], 3);
+        assert_eq!(
+            c[0]["drones"],
+            json!([{"id": "alpha", "name": "ALPHA"}, {"id": "bravo", "name": "BRAVO"}])
+        );
+        assert_eq!(c[0]["nearest_m"], 8.0);
+        assert_eq!(c[1]["label"], "car");
+        assert_eq!(c[1]["count"], 2);
+        assert_eq!(c[1]["drones"], json!([{"id": "alpha", "name": "ALPHA"}]));
+        assert_eq!(c[2]["label"], "cup");
+        assert_eq!(
+            c[2]["nearest_m"],
+            Value::Null,
+            "no range → none shown, never made up"
+        );
+        assert!(fleet_contacts(&[]).is_empty());
+    }
+
+    #[test]
+    fn offline_drones_contribute_no_sightings() {
+        let d = Drone::new(cfg());
+        d.live.write().unwrap().absorb(&json!({"type": "hello", "snapshot": {"detections": {"detections": [{"label": "person"}]}}}));
+        assert!(d.sightings().is_empty(), "not online yet");
+        d.live.write().unwrap().online = true;
+        let got = d.sightings();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].label, "person");
+        assert_eq!(got[0].drone_id, "alpha");
     }
 
     #[test]

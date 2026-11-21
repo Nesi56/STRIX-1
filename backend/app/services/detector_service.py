@@ -154,7 +154,7 @@ class DetectorService:
         """Typical object sizes for distance estimates: defaults, then .env overrides, then the synthetic scene's
         true sizes (demo only, so the synthetic table-top ball isn't sized like a football)."""
         out = dict(SIZE_PRIORS_M)
-        out.update(parse_size_priors(self.settings.detector_size_priors))
+        out.update(parse_size_priors(self.settings.detector_size_priors, self.vocabulary or None))
         if self.engine_kind == "synthetic":
             out.update(self.camera.scene_size_priors())
         return out

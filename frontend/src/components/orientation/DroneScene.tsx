@@ -20,15 +20,15 @@ function Arm({ angle, front }: { angle: number; front: boolean }) {
     <group>
       <mesh position={[x / 2, 0, z / 2]} rotation={[0, -angle, 0]}>
         <boxGeometry args={[0.16, 0.06, ARM]} />
-        <meshStandardMaterial color={front ? "#1f5670" : "#2b322d"} metalness={0.3} roughness={0.6} />
+        <meshStandardMaterial color={front ? "#45464b" : "#2a2b2e"} metalness={0.3} roughness={0.6} />
       </mesh>
       <mesh position={[x, 0.09, z]}>
         <cylinderGeometry args={[0.13, 0.13, 0.16, 24]} />
-        <meshStandardMaterial color="#9aa6b8" metalness={0.8} roughness={0.3} />
+        <meshStandardMaterial color="#9b9ca1" metalness={0.8} roughness={0.3} />
       </mesh>
       <mesh position={[x, 0.2, z]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={[0.635, 40]} />
-        <meshStandardMaterial color={front ? "#6fd3ff" : "#ff4d5e"} transparent opacity={0.18} side={THREE.DoubleSide} />
+        <meshStandardMaterial color={front ? "#f4f4f5" : "#df474e"} transparent opacity={0.18} side={THREE.DoubleSide} />
       </mesh>
     </group>
   );
@@ -55,27 +55,27 @@ export function Quad({ smoothing, lockYaw, cameraTilt }: { smoothing: boolean; l
       {[45, 135, 225, 315].map((a) => <Arm key={a} angle={a * D2R} front={a === 45 || a === 315} />)}
       <mesh>
         <boxGeometry args={[0.55, 0.12, 1.1]} />
-        <meshStandardMaterial color="#141b26" metalness={0.2} roughness={0.8} />
+        <meshStandardMaterial color="#18191c" metalness={0.2} roughness={0.8} />
       </mesh>
       <mesh position={[0, 0.16, 0.05]}>
         <boxGeometry args={[0.45, 0.2, 0.55]} />
-        <meshStandardMaterial color="#0f2236" metalness={0.4} roughness={0.5} />
+        <meshStandardMaterial color="#1a1b1e" metalness={0.4} roughness={0.5} />
       </mesh>
       {/* camera on tilt servo */}
       <group position={[0, 0.12, -0.62]} rotation={[tilt * D2R, 0, 0]}>
         <mesh>
           <boxGeometry args={[0.26, 0.2, 0.12]} />
-          <meshStandardMaterial color="#05080d" />
+          <meshStandardMaterial color="#0a0a0b" />
         </mesh>
         <mesh position={[0, 0, -0.08]} rotation={[Math.PI / 2, 0, 0]}>
           <cylinderGeometry args={[0.06, 0.06, 0.06, 20]} />
-          <meshStandardMaterial color="#6fd3ff" emissive="#0e3446" />
+          <meshStandardMaterial color="#f4f4f5" emissive="#2a2b2e" />
         </mesh>
       </group>
       {/* nose arrow */}
       <mesh position={[0, 0.02, -1.0]} rotation={[-Math.PI / 2, 0, 0]}>
         <coneGeometry args={[0.1, 0.3, 3]} />
-        <meshStandardMaterial color="#6fd3ff" emissive="#1f5670" />
+        <meshStandardMaterial color="#f4f4f5" emissive="#45464b" />
       </mesh>
       <axesHelper args={[0.9]} />
     </group>
@@ -90,14 +90,14 @@ const DroneScene = forwardRef<DroneSceneHandle, { smoothing: boolean; lockYaw: b
     useImperativeHandle(ref, () => ({ resetView: () => controls.current?.reset() }));
     return (
       <Canvas camera={{ position: [2.6, 1.9, 3.2], fov: 45 }} dpr={[1, 2]} gl={{ antialias: true }}>
-        <color attach="background" args={["#0a0c0b"]} />
+        <color attach="background" args={["#09090a"]} />
         <ambientLight intensity={0.55} />
         <directionalLight position={[3, 5, 2]} intensity={1.3} />
-        <directionalLight position={[-3, 2, -4]} intensity={0.4} color="#9fe7bf" />
+        <directionalLight position={[-3, 2, -4]} intensity={0.4} color="#d0d0d2" />
         <Quad {...props} />
         {/* Reference horizon plane and world axes (fixed, not geographic) */}
-        <Grid position={[0, -0.6, 0]} args={[20, 20]} cellSize={0.5} cellThickness={0.5} cellColor="#1c2a21"
-          sectionSize={2.5} sectionThickness={1} sectionColor="#1f5670" fadeDistance={22} infiniteGrid />
+        <Grid position={[0, -0.6, 0]} args={[20, 20]} cellSize={0.5} cellThickness={0.5} cellColor="#202124"
+          sectionSize={2.5} sectionThickness={1} sectionColor="#45464b" fadeDistance={22} infiniteGrid />
         <axesHelper args={[1.6]} position={[0, -0.6, 0]} />
         <OrbitControls ref={controls} makeDefault enablePan={false} minDistance={2} maxDistance={12} />
       </Canvas>

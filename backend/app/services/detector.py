@@ -127,19 +127,21 @@ def focal_px(width: int, hfov_deg: float) -> float:
     return (width / 2.0) / math.tan(math.radians(hfov_deg) / 2.0)
 
 
-def parse_size_priors(text: str) -> dict[str, float]:
-    """Parse "sports ball=0.067, cup=0.11" into {label: metres}; unknown labels and bad values are ignored."""
+def parse_size_priors(text: str, vocabulary: list[str] | None = None) -> dict[str, float]:
+    """Parse "sports ball=0.067, cup=0.11" into {label: metres}. Labels are matched against the detector's
+    classes (COCO by default, or a custom model's own classes); unknown labels and bad values are ignored."""
+    vocab = vocabulary or COCO80
     out: dict[str, float] = {}
     for part in (text or "").split(","):
         if "=" not in part:
             continue
         k, v = part.split("=", 1)
-        label = normalize_label(k)
+        label = normalize_label(k, vocab)
         try:
             val = float(v)
         except ValueError:
             continue
-        if label in COCO80 and 0.005 <= val <= 50:
+        if label is not None and 0.005 <= val <= 50:
             out[label] = val
     return out
 

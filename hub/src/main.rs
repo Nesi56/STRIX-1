@@ -181,7 +181,10 @@ async fn logout() -> Response {
 async fn fleet(State(st): State<Arc<AppState>>) -> Json<Value> {
     let drones: Vec<Value> = st.drones.iter().map(|d| d.summary()).collect();
     let qwen = st.qwen_status.read().unwrap().clone();
-    Json(json!({ "version": VERSION, "drones": drones, "qwen": qwen }))
+    // The shared observation picture: what every drone sees, merged. Advisory only.
+    let sightings: Vec<fleet::Sighting> = st.drones.iter().flat_map(|d| d.sightings()).collect();
+    let contacts = fleet::fleet_contacts(&sightings);
+    Json(json!({ "version": VERSION, "drones": drones, "qwen": qwen, "contacts": contacts }))
 }
 
 /// Stop every drone's camera servo and AI task at once (the drones' own e-stop).

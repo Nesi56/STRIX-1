@@ -89,19 +89,19 @@ function Playback({ session, onClose }: { session: Session; onClose: () => void 
           <div className="grid gap-2">
             <div><div className="label">Orientation (°)</div>
               <LiveChart data={rows} xKey="ts" unit="°" height={110} xFormatter={rel} referenceX={cursor}
-                series={[{ key: "roll", name: "Roll", color: "#38d6ff" }, { key: "pitch", name: "Pitch", color: "#f2b33d" }, { key: "yaw_rel", name: "Rel. yaw", color: "#c08bff" }]} />
+                series={[{ key: "roll", name: "Roll", color: "#f4f4f5" }, { key: "pitch", name: "Pitch", color: "#d6a441" }, { key: "yaw_rel", name: "Rel. yaw", color: "#a6a7ab" }]} />
             </div>
             <div><div className="label">Acceleration (m/s²)</div>
               <LiveChart data={rows} xKey="ts" unit="m/s²" height={110} xFormatter={rel} referenceX={cursor}
-                series={[{ key: "ax", name: "X", color: "#ff5468" }, { key: "ay", name: "Y", color: "#34d58a" }, { key: "az", name: "Z", color: "#4c8dff" }]} />
+                series={[{ key: "ax", name: "X", color: "#df474e" }, { key: "ay", name: "Y", color: "#d4d4d6" }, { key: "az", name: "Z", color: "#b7b8bc" }]} />
             </div>
             <div><div className="label">Angular velocity (°/s)</div>
               <LiveChart data={rows} xKey="ts" unit="°/s" height={110} xFormatter={rel} referenceX={cursor}
-                series={[{ key: "gx", name: "X", color: "#ff5468" }, { key: "gy", name: "Y", color: "#34d58a" }, { key: "gz", name: "Z", color: "#4c8dff" }]} />
+                series={[{ key: "gx", name: "X", color: "#df474e" }, { key: "gy", name: "Y", color: "#d4d4d6" }, { key: "gz", name: "Z", color: "#b7b8bc" }]} />
             </div>
             <div><div className="label">Environment & system</div>
               <LiveChart data={rows} xKey="ts" unit="" height={110} xFormatter={rel} referenceX={cursor}
-                series={[{ key: "env_temp", name: "Temp °C", color: "#f2b33d" }, { key: "humidity", name: "RH %", color: "#4c8dff" }, { key: "cpu_percent", name: "CPU %", color: "#7d91ab" }]} />
+                series={[{ key: "env_temp", name: "Temp °C", color: "#d6a441" }, { key: "humidity", name: "RH %", color: "#b7b8bc" }, { key: "cpu_percent", name: "CPU %", color: "#7c7d82" }]} />
             </div>
           </div>
           {data.events.length > 0 && (
@@ -145,7 +145,7 @@ export function RecordingsTab() {
       {sessions.map((s) => {
         const video = s.metadata.video as string | undefined;
         return (
-          <div key={s.id} className="rounded-[3px] border border-line bg-[#0a0e11] p-1.5">
+          <div key={s.id} className="rounded-[3px] border border-line bg-[#0c0c0e] p-1.5">
             <div className="flex items-center gap-1.5">
               <span className="truncate text-text">{s.name}</span>
               {s.active ? <Tag tone="crit">REC</Tag> : s.synthetic ? <Tag tone="synth">SYNTH</Tag> : null}

@@ -1,4 +1,4 @@
-import { Circle, OctagonX, RotateCcw, Square } from "lucide-react";
+import { Circle, OctagonX, Settings2, Square } from "lucide-react";
 import { useState } from "react";
 import { useTelemetry } from "../../hooks/useTelemetry";
 import { errorMessage, post } from "../../services/api";
@@ -50,7 +50,7 @@ export function TopBar({ nav }: { nav?: React.ReactNode } = {}) {
   };
 
   return (
-    <header className="z-30 shrink-0 border-b border-line bg-[#0a0e11]">
+    <header className="z-30 shrink-0 border-b border-line bg-[#0c0c0e]">
       <div className="flex flex-wrap items-center gap-2 px-3 py-2 sm:gap-3">
         <div className="flex shrink-0 items-center gap-2">
           <BrandMark />
@@ -70,7 +70,7 @@ export function TopBar({ nav }: { nav?: React.ReactNode } = {}) {
           <OctagonX size={14} /> <span className="hidden sm:inline">Emergency Stop</span>
         </button>
         <button className="btn btn-reset shrink-0" onClick={() => void reset()} title="Clear chat and agent state">
-          <RotateCcw size={13} /> <span className="hidden md:inline">Reset Session</span>
+          <Settings2 size={13} /> <span className="hidden md:inline">Reset Session</span>
         </button>
       </div>
     </header>

@@ -1,12 +1,14 @@
 import { ArrowRight, Brain, LogOut, OctagonX, VideoOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Wordmark, useUtcClock } from "../components/common/Brand";
+import { FleetContacts } from "../components/fleet/FleetContacts";
 import { TacticalPlot } from "../components/fleet/TacticalPlot";
 import { useToast } from "../components/common/toast";
 import { errorMessage, post } from "../services/api";
 import type { FleetDrone, FleetResponse } from "../types/fleet";
 
-const DEFAULT_COLORS = ["#6fd3ff", "#f2b84b", "#c69bff", "#7be0a8", "#ff8a95", "#9db4ff", "#f2e05c", "#59e0c5"];
+// Monochrome console: drones are told apart by brightness, not hue (a greyscale ramp from white down).
+const DEFAULT_COLORS = ["#f4f4f5", "#b9babe", "#898a8f", "#d6d6d8", "#9fa0a4", "#6f7075", "#c6c6c8", "#808186"];
 export const droneColor = (d: FleetDrone, i: number) => d.color ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length];
 
 const n = (v: number | null | undefined, digits = 0) => (v === null || v === undefined ? "—" : (Math.abs(v) < 0.5 / 10 ** digits ? 0 : v).toFixed(digits));
@@ -16,9 +18,9 @@ const signed = (v: number | null | undefined, digits = 0) => (v === null || v ==
 function HeadingDial({ yaw, color, size = 44 }: { yaw: number | null; color: string; size?: number }) {
   return (
     <svg viewBox="-22 -22 44 44" width={size} height={size} className="shrink-0" aria-label={yaw === null ? "heading unknown" : `relative heading ${n(yaw)}°`}>
-      <circle r="19" fill="#0b1014" stroke="#2a3540" />
+      <circle r="19" fill="#0c0c0e" stroke="#3a3b40" />
       {Array.from({ length: 12 }, (_, i) => (
-        <line key={i} x1="0" y1="-19" x2="0" y2={i % 3 === 0 ? -15 : -17} stroke="#55626e" strokeWidth="1" transform={`rotate(${i * 30})`} />
+        <line key={i} x1="0" y1="-19" x2="0" y2={i % 3 === 0 ? -15 : -17} stroke="#5f6065" strokeWidth="1" transform={`rotate(${i * 30})`} />
       ))}
       {yaw !== null && (
         <g transform={`rotate(${yaw})`}>
@@ -37,7 +39,7 @@ function Horizon({ roll, pitch, color }: { roll: number | null; pitch: number | 
     <svg viewBox="-20 -20 40 40" width={44} height={44} className="shrink-0" aria-label={known ? `roll ${n(roll)}°, pitch ${n(pitch)}°` : "attitude unknown"}>
       <defs><clipPath id="hz"><circle r="18" /></clipPath></defs>
       <g clipPath="url(#hz)">
-        <rect x="-30" y="-30" width="60" height="60" fill="#0e1a24" />
+        <rect x="-30" y="-30" width="60" height="60" fill="#15161a" />
         {known && (
           <g transform={`rotate(${-(roll as number)}) translate(0 ${shift})`}>
             <rect x="-30" y="0" width="60" height="30" fill="#1d1a14" />
@@ -45,8 +47,8 @@ function Horizon({ roll, pitch, color }: { roll: number | null; pitch: number | 
           </g>
         )}
       </g>
-      <circle r="18" fill="none" stroke="#2a3540" strokeWidth="1.5" />
-      <path d="M-9 0 H-3 L0 3 L3 0 H9" fill="none" stroke="#dfe6ec" strokeWidth="1.4" />
+      <circle r="18" fill="none" stroke="#3a3b40" strokeWidth="1.5" />
+      <path d="M-9 0 H-3 L0 3 L3 0 H9" fill="none" stroke="#ededee" strokeWidth="1.4" />
     </svg>
   );
 }
@@ -71,7 +73,7 @@ function AssetRow({ d, color }: { d: FleetDrone; color: string }) {
   const s = statusOf(d);
   return (
     <a href={`#/d/${d.id}`} className="group flex items-center gap-2.5 border-b border-line px-3 py-2.5 hover:bg-panel-2" title={`Open ${d.name}`}>
-      <span className="h-8 w-[3px] shrink-0" style={{ background: d.online ? color : "#2a3540" }} />
+      <span className="h-8 w-[3px] shrink-0" style={{ background: d.online ? color : "#3a3b40" }} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-[15px] font-semibold tracking-[0.12em]">{d.name.toUpperCase()}</span>
@@ -127,7 +129,7 @@ function DroneTile({ d, color, live }: { d: FleetDrone; color: string; live: boo
   return (
     <article className="panel corner relative flex min-w-0 flex-col">
       <header className="flex items-center gap-2 border-b border-line px-3 py-2">
-        <span className="h-3 w-3 shrink-0" style={{ background: d.online ? color : "#2a3540" }} />
+        <span className="h-3 w-3 shrink-0" style={{ background: d.online ? color : "#3a3b40" }} />
         <h2 className="truncate text-[16px] font-bold tracking-[0.16em]">{d.name.toUpperCase()}</h2>
         <span className="num text-[11px] text-dim">{d.id}</span>
         <div className="ml-auto flex shrink-0 items-center gap-1.5 text-[10.5px] font-semibold tracking-[0.14em]">
@@ -139,7 +141,7 @@ function DroneTile({ d, color, live }: { d: FleetDrone; color: string; live: boo
         </div>
       </header>
 
-      <a href={`#/d/${d.id}`} className="group relative block aspect-video overflow-hidden bg-black" title={`Open ${d.name}'s console`} style={{ ["--hud" as string]: d.online ? color : "#2a3540" }}>
+      <a href={`#/d/${d.id}`} className="group relative block aspect-video overflow-hidden bg-black" title={`Open ${d.name}'s console`} style={{ ["--hud" as string]: d.online ? color : "#3a3b40" }}>
         {d.online ? (
           <img src={src} alt={`${d.name} camera`} className="h-full w-full object-cover" />
         ) : (
@@ -249,7 +251,7 @@ export function FleetPage({ fleet, error }: { fleet: FleetResponse | null; error
 
   return (
     <div className="flex h-full flex-col">
-      <header className="z-30 shrink-0 border-b border-line bg-[#0a0e11]">
+      <header className="z-30 shrink-0 border-b border-line bg-[#0c0c0e]">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
           <Wordmark sub="FLEET · ADVISORY ONLY · PILOTS FLY" />
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] font-semibold tracking-[0.14em]">
@@ -266,12 +268,13 @@ export function FleetPage({ fleet, error }: { fleet: FleetResponse | null; error
         </div>
       </header>
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <aside className="shrink-0 border-b border-line bg-[#0a0e11] lg:w-[270px] lg:border-b-0 lg:border-r">
+        <aside className="shrink-0 border-b border-line bg-[#0c0c0e] lg:w-[270px] lg:border-b-0 lg:border-r">
           <div className="tick-label flex items-center justify-between px-3 py-2">Assets <span className="num text-dim">{drones.length}</span></div>
           <div className="border-t border-line">
             {drones.map((d, i) => <AssetRow key={d.id} d={d} color={droneColor(d, i)} />)}
           </div>
           <div className="pt-3">
+            <FleetContacts contacts={fleet?.contacts ?? []} online={online} />
             <TacticalPlot drones={drones} colors={Object.fromEntries(drones.map((d, i) => [d.id, droneColor(d, i)]))} />
           </div>
           {!drones.some((d) => d.online && d.position) && (
