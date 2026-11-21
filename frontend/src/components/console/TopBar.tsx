@@ -58,7 +58,8 @@ export function TopBar({ nav }: { nav?: React.ReactNode } = {}) {
           {!nav && <span className="hidden text-[10px] tracking-[0.14em] text-dim md:inline">AI CAMERA DRONE · QWEN + YOLO</span>}
         </div>
         {nav}
-        {st?.demo_mode && <span className="hidden shrink-0 rounded border border-synth/40 bg-synth/10 px-1.5 text-[10px] tracking-wider text-synth sm:inline">SYNTHETIC DEMO DATA</span>}
+        {st?.demo_mode && <span className="hidden shrink-0 rounded border border-synth/40 bg-synth/10 px-1.5 text-[10px] tracking-wider text-synth sm:inline"
+          title={st.sim ? `${st.sim.model} · MAVLink ${st.sim.mavlink}` : undefined}>{st.sim ? "PX4 + GAZEBO SIMULATION" : "SYNTHETIC DEMO DATA"}</span>}
         <div className="flex-1" />
         <button className={`btn shrink-0 ${recording ? "btn-danger" : ""}`} disabled={busy} onClick={() => void toggleRec()}
           title="Record the drone camera video and all sensor data together">

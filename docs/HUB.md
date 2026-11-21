@@ -79,7 +79,9 @@ stops that drone (the same keys as before work there).
 
 ### Try it without any Pi
 
-Start two demo drones and a hub that points at them:
+For flying drones with real flight-controller software, physics, cameras and GPS, use the simulator:
+[SIMULATION.md](SIMULATION.md) (`scripts/sim/run_fleet.sh` starts PX4 + Gazebo drones and a hub on port 9100).
+For a quick look without installing anything else, start two demo drones and a hub that points at them:
 
 ```bash
 STRIX_PORT=8101 STRIX_AUTH_TOKEN=tok1 STRIX_DATA_DIR=data/d1 scripts/run_mock.sh

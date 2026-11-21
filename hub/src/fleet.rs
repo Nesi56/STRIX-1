@@ -135,7 +135,49 @@ pub fn summarize(cfg: &DroneConfig, live: &Live, token_error: Option<&str>) -> V
             if b.get("available") == Some(&Value::Bool(true))
                 && b.get("percent").is_some_and(Value::is_number) =>
         {
-            json!({ "percent": b["percent"], "source": num(&t, &["system", "power", "source"]) })
+            let source = match b.get("source") {
+                Some(Value::String(s)) => Value::String(s.clone()),
+                _ => num(&t, &["system", "power", "source"]),
+            };
+            json!({ "percent": b["percent"], "source": source, "synthetic": b.get("synthetic").cloned().unwrap_or(Value::Null) })
+        }
+        _ => Value::Null,
+    };
+    // Flight controller (MAVLink; PX4 SITL in simulation). Read-only telemetry.
+    let flight = match t.get("flight") {
+        Some(f) if f.is_object() => json!({
+            "connected": num(f, &["connected"]),
+            "label": num(f, &["label"]),
+            "autopilot": num(f, &["autopilot"]),
+            "armed": num(f, &["armed"]),
+            "mode": num(f, &["mode"]),
+            "landed": num(f, &["landed"]),
+            "heading": num(f, &["attitude", "heading"]),
+            "groundspeed_ms": num(f, &["velocity", "groundspeed_ms"]),
+            "climb_ms": num(f, &["velocity", "climb_ms"]),
+            "synthetic": num(f, &["synthetic"]),
+        }),
+        _ => Value::Null,
+    };
+    // A position only when the drone reports one (3D GPS fix); never made up here.
+    let position = match t
+        .pointer("/flight/position")
+        .or_else(|| t.pointer("/mapping/position"))
+    {
+        Some(p)
+            if p.get("available") == Some(&Value::Bool(true))
+                && p.get("lat").is_some_and(Value::is_number) =>
+        {
+            json!({
+                "lat": p["lat"], "lon": p["lon"], "alt_rel_m": num(p, &["alt_rel_m"]), "fix": num(p, &["fix"]),
+                "satellites": num(p, &["satellites"]), "synthetic": num(p, &["synthetic"]), "source": num(p, &["source"]),
+            })
+        }
+        _ => Value::Null,
+    };
+    let sim = match t.get("sim") {
+        Some(s) if s.is_object() => {
+            json!({ "kind": num(s, &["kind"]), "label": num(s, &["label"]), "model": num(s, &["model"]) })
         }
         _ => Value::Null,
     };
@@ -169,6 +211,7 @@ pub fn summarize(cfg: &DroneConfig, live: &Live, token_error: Option<&str>) -> V
             "armed": num(&t, &["servo", "armed"]),
             "tilt_deg": num(&t, &["servo", "tilt_deg"]),
             "estop_latched": num(&t, &["servo", "estop_latched"]),
+            "stabilized": num(&t, &["servo", "stabilized"]),
         },
         "system": {
             "cpu_temp_c": num(&t, &["system", "cpu_temp_c"]),
@@ -181,6 +224,9 @@ pub fn summarize(cfg: &DroneConfig, live: &Live, token_error: Option<&str>) -> V
         "objects": objects,
         "memory": { "remembered": remembered, "hidden": hidden },
         "battery": battery,
+        "flight": flight,
+        "position": position,
+        "sim": sim,
     })
 }
 
@@ -337,12 +383,38 @@ mod tests {
     }
 
     #[test]
+    fn flight_position_and_sim() {
+        let mut l = Live {
+            online: true,
+            ..Default::default()
+        };
+        l.absorb(&json!({"type": "hello", "snapshot": {
+            "sim": {"kind": "px4-gz", "label": "PX4 + Gazebo simulation", "model": "x500_gimbal_1"},
+            "flight": {"connected": true, "label": "PX4 SITL #1", "autopilot": "PX4", "armed": true, "mode": "POSCTL",
+                       "landed": "in air", "synthetic": true, "attitude": {"heading": 93.5}, "velocity": {"groundspeed_ms": 3.1, "climb_ms": 0.2},
+                       "position": {"available": true, "lat": 47.3979712, "lon": 8.5461639, "alt_rel_m": 12.3, "fix": "3D fix",
+                                    "satellites": 10, "synthetic": true, "source": "PX4 SITL #1 GPS (simulated)"}},
+            "system": {"power": {"battery": {"available": true, "percent": 81, "source": "PX4 SITL #1 (simulated battery)", "synthetic": true}}},
+        }}));
+        let s = summarize(&cfg(), &l, None);
+        assert_eq!(s["flight"]["mode"], "POSCTL");
+        assert_eq!(s["flight"]["heading"], 93.5);
+        assert_eq!(s["position"]["lat"], 47.3979712);
+        assert_eq!(s["position"]["synthetic"], true);
+        assert_eq!(s["battery"]["source"], "PX4 SITL #1 (simulated battery)");
+        assert_eq!(s["sim"]["kind"], "px4-gz");
+        // no fix → no position at all
+        l.absorb(&json!({"type": "telemetry", "flight": {"connected": true, "position": {"available": false, "message": "GPS: 2D fix"}}}));
+        assert_eq!(summarize(&cfg(), &l, None)["position"], Value::Null);
+    }
+
+    #[test]
     fn battery_only_from_real_source() {
         let mut l = Live::default();
         l.absorb(&json!({"type": "hello", "snapshot": {"system": {"power": {"source": "ina219", "battery": {"available": true, "percent": 64}}}}}));
         assert_eq!(
             summarize(&cfg(), &l, None)["battery"],
-            json!({"percent": 64, "source": "ina219"})
+            json!({"percent": 64, "source": "ina219", "synthetic": null})
         );
     }
 

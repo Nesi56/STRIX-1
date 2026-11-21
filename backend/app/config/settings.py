@@ -14,7 +14,7 @@ from __future__ import annotations
 import ipaddress
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     telemetry_hz: float = Field(20.0, ge=1.0, le=60.0)
 
     # --------------------------------------------------------------------- IMU
-    imu_backend: Literal["auto", "adafruit", "mock", "disabled"] = "auto"
+    imu_backend: Literal["auto", "adafruit", "mavlink", "mock", "disabled"] = "auto"
     imu_address: int = 0x68
     imu_rate_hz: float = Field(100.0, ge=5.0, le=500.0)
     imu_accel_range_g: Literal[2, 4, 8, 16] = 4
@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     dht_iio_device: str = ""  # e.g. /sys/bus/iio/devices/iio:device0 (auto-detect if empty)
 
     # ------------------------------------------------------------------- servo
-    servo_backend: Literal["auto", "gpiozero", "hardware_pwm", "mock", "disabled"] = "auto"
+    servo_backend: Literal["auto", "gpiozero", "hardware_pwm", "mavlink_gimbal", "mock", "disabled"] = "auto"
     servo_gpio: int = 18
     servo_min_angle: float = Field(30.0, ge=0.0, le=180.0)
     servo_max_angle: float = Field(150.0, ge=0.0, le=180.0)
@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     servo_up_is_positive: bool = True
 
     # ------------------------------------------------------------------ camera
-    camera_backend: Literal["auto", "picamera2", "mock", "disabled"] = "auto"
+    camera_backend: Literal["auto", "picamera2", "gazebo", "mock", "disabled"] = "auto"
     camera_width: int = Field(1280, ge=320, le=4608)
     camera_height: int = Field(720, ge=240, le=2592)
     camera_fps: float = Field(30.0, ge=1.0, le=120.0)
@@ -152,6 +152,21 @@ class Settings(BaseSettings):
     detector_size_priors: str = ""
     # synthetic demo scene (STRIX_MOCK=true only): "outdoor" (people/car) or "cups" (shell game)
     mock_scene: Literal["outdoor", "cups"] = "outdoor"
+
+    # ------------------------------------------- simulation / flight controller (MAVLink)
+    # "px4-gz": run against PX4 SITL + Gazebo Harmonic instead of the Pi's hardware (docs/SIMULATION.md).
+    # Camera = the simulated drone's camera, MPU6050 = the vehicle IMU, servo = its camera gimbal,
+    # GPS/battery/flight state = PX4 telemetry. Everything stays labelled simulated.
+    sim: Literal["off", "px4-gz"] = "off"
+    sim_instance: int = Field(1, ge=0, le=63)  # PX4 SITL instance (px4 -i N)
+    sim_model: str = "x500_gimbal"  # Gazebo model: x500_gimbal (camera on a gimbal), x500_mono_cam, ...
+    sim_camera_topic: str = ""  # Gazebo image topic; empty = find it automatically
+    sim_gz_python: str = ""  # python that has Gazebo's bindings (gz.transport13); empty = try the usual ones
+    # Link to a flight controller, real or simulated. Read-only telemetry; the only command it may send
+    # is camera-gimbal pointing. e.g. "udpin:127.0.0.1:14541" (PX4 SITL instance 1) or "/dev/serial0,921600".
+    # Empty = none (in simulation: udpin:127.0.0.1:<14540 + instance>).
+    mavlink_url: str = ""
+    mavlink_gimbal: bool | Literal["auto"] = "auto"  # auto: on in simulation with a gimbal model
 
     # -------------------------------------------------------------- local Qwen
     qwen_enabled: bool = Field(True, validation_alias=_alias("QWEN_ENABLED", "qwen_enabled"))
@@ -216,6 +231,13 @@ class Settings(BaseSettings):
             ipaddress.ip_network(part, strict=False)
         return v
 
+    @field_validator("sim_model")
+    @classmethod
+    def _validate_sim_model(cls, v: str) -> str:
+        if not v or len(v) > 64 or not all(c.isalnum() or c == "_" for c in v):
+            raise ValueError("STRIX_SIM_MODEL: letters, digits and _ only (e.g. x500_gimbal)")
+        return v
+
     @model_validator(mode="after")
     def _validate_servo(self) -> "Settings":
         if self.servo_min_angle >= self.servo_max_angle:
@@ -244,11 +266,39 @@ class Settings(BaseSettings):
     def media_dir(self) -> Path:
         return self.data_dir / "media"
 
-    def backend_for(self, configured: str) -> str:
-        """Resolve a configured hardware backend, honouring global mock mode."""
+    # What each device becomes in simulation when its backend is "auto".
+    SIM_BACKENDS: ClassVar[dict[str, str]] = {"imu": "mavlink", "camera": "gazebo", "servo": "mavlink_gimbal", "dht": "mock"}
+
+    def backend_for(self, configured: str, device: str | None = None) -> str:
+        """Resolve a configured hardware backend, honouring simulation and global mock mode."""
         if configured == "disabled":
             return "disabled"
+        if self.sim != "off" and configured == "auto" and device in self.SIM_BACKENDS:
+            choice = self.SIM_BACKENDS[device]
+            if device == "servo" and not self.gimbal_enabled:
+                choice = "mock"  # the simulated drone has a fixed camera
+            return choice
         return "mock" if self.mock else configured
+
+    @property
+    def effective_mavlink_url(self) -> str:
+        """Flight-controller link: the configured one, or PX4 SITL's onboard port in simulation."""
+        if self.mavlink_url.strip():
+            return self.mavlink_url.strip()
+        if self.sim != "off":
+            return f"udpin:127.0.0.1:{14540 + self.sim_instance}"
+        return ""
+
+    @property
+    def sim_gz_model_name(self) -> str:
+        """Name PX4 gives the vehicle in Gazebo (model + "_" + instance)."""
+        return f"{self.sim_model}_{self.sim_instance}"
+
+    @property
+    def gimbal_enabled(self) -> bool:
+        if self.mavlink_gimbal == "auto":
+            return self.sim != "off" and "gimbal" in self.sim_model
+        return bool(self.mavlink_gimbal) and bool(self.effective_mavlink_url)
 
 
 def parse_axis_map(spec: str) -> list[tuple[int, float]]:

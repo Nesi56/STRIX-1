@@ -171,7 +171,7 @@ class DHTService:
         self._session = {"temp_min": None, "temp_max": None, "hum_min": None, "hum_max": None, "since": time.time()}
 
     def _make_backend(self) -> DHTBackend | None:
-        mode = self.settings.backend_for(self.settings.dht_backend)
+        mode = self.settings.backend_for(self.settings.dht_backend, "dht")
         if mode == "disabled":
             self.status.backend = "disabled"
             self.status.set(DeviceState.DISABLED, "disabled by configuration")

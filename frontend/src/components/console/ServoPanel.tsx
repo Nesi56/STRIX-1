@@ -86,7 +86,11 @@ export function ServoPanel({ className }: { className?: string }) {
         <div><div className="label">Commanded</div>{fmt(sv.commanded_angle, 1, "°")} {sv.moving && <span className="text-cyan">▸</span>}</div>
         <div><div className="label">Rate limit</div>{fmt(L.max_speed_dps, 0, "°/s")}</div>
       </div>
-      <p className="mt-2 text-[10.5px] text-muted">SG90 on GPIO{sv.gpio}{sv.pin ? ` (pin ${sv.pin})` : ""} · keys: E enable · W/S tilt · C center · Space stop</p>
+      <p className="mt-2 text-[10.5px] text-muted">
+        {sv.stabilized
+          ? `Camera gimbal via the flight controller${sv.measured_tilt_deg != null ? ` · reports ${sv.measured_tilt_deg > 0 ? "+" : ""}${sv.measured_tilt_deg.toFixed(0)}°` : ""}`
+          : `SG90 on GPIO${sv.gpio}${sv.pin ? ` (pin ${sv.pin})` : ""}`} · keys: E enable · W/S tilt · C center · Space stop
+      </p>
     </Panel>
   );
 }

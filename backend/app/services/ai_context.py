@@ -40,6 +40,10 @@ def observe(c: Any) -> dict[str, Any]:
         dets = sorted(det["detections"], key=lambda d: -d["confidence"])[:8]
     synthetic = [n for n, s in (("imu", c.imu.status), ("dht11", c.dht.status), ("camera", c.camera.status),
                                 ("detector", c.detector.status)) if s.synthetic]
+    fl = getattr(c, "flight", None)
+    flight = fl.snapshot() if fl is not None else None
+    if flight and flight["synthetic"]:
+        synthetic.append("flight controller (simulator)")
     return {
         "ts": now,
         "synthetic": synthetic,
@@ -62,7 +66,46 @@ def observe(c: Any) -> dict[str, Any]:
         "prompts": list(c.detector.prompts),
         "system": {"cpu": sysm.get("cpu_percent"), "cpu_temp": sysm.get("cpu_temp_c"),
                    "warnings": [w["message"] for w in sysm.get("warnings", [])]},
+        "flight": flight,
     }
+
+
+def flight_lines(f: dict[str, Any] | None) -> list[str]:
+    """What the flight controller reports (real or simulated). Says plainly what is missing."""
+    if not f or not f.get("connected"):
+        why = f"no link to the flight controller ({f['status']['error']})" if f and f["status"].get("error") else "no flight controller"
+        return [f"UNAVAILABLE: GPS/position, altitude, ground speed, compass heading, battery level ({why})."]
+    tag = "SIMULATED" if f["synthetic"] else "MEASURED"
+    L: list[str] = []
+    state = [f["autopilot"] or "autopilot", "ARMED" if f["armed"] else "disarmed"]
+    if f.get("mode"):
+        state.append(f"mode {f['mode']}")
+    if f.get("landed"):
+        state.append(f["landed"])
+    L.append(f"FLIGHT CONTROLLER [{tag}, {f['label']}]: {', '.join(state)} (the pilot flies; STRIX-1 never commands flight)")
+    att, vel, pos, bat = f.get("attitude"), f.get("velocity"), f.get("position") or {}, f.get("battery")
+    missing = []
+    if pos.get("available"):
+        L.append(f"GPS [{tag}]: {pos['lat']:.6f}, {pos['lon']:.6f}; {pos['alt_rel_m']:.1f} m above home; {pos['fix']}, "
+                 f"{pos.get('satellites') or '?'} satellites")
+    else:
+        missing.append(f"GPS/position ({pos.get('message', 'no fix')})")
+    if att:
+        L.append(f"HEADING [{tag}]: {att['heading']:.0f}° (flight controller, 0 = north)")
+    else:
+        missing.append("heading")
+    if vel:
+        L.append(f"SPEED [{tag}]: {vel['groundspeed_ms']:.1f} m/s over ground, climbing {vel['climb_ms']:+.1f} m/s")
+    else:
+        missing.append("ground speed")
+    if bat and bat.get("available"):
+        v = f", {bat['voltage_v']:.1f} V" if bat.get("voltage_v") else ""
+        L.append(f"BATTERY [{tag}]: {bat['percent']:.0f} %{v} ({bat['source']})")
+    else:
+        missing.append("battery level")
+    if missing:
+        L.append(f"UNAVAILABLE: {', '.join(missing)}.")
+    return L
 
 
 def _memory(c: Any) -> dict[str, Any]:
@@ -162,7 +205,7 @@ def observation_text(o: dict[str, Any]) -> str:
         L.extend(f"  - {line}" for line in mem["lines"])
     for w in o["system"]["warnings"]:
         L.append(f"SYSTEM WARNING: {w}")
-    L.append("UNAVAILABLE: GPS/position, altitude, ground speed, compass heading, battery level.")
+    L.extend(flight_lines(o.get("flight")))
     return "\n".join(L)
 
 
@@ -319,13 +362,36 @@ def deterministic_watch(dets: list[dict[str, Any]], sugg: list[str], synthetic: 
 
 ENV_WORDS = r"temp|humid|warm|cold|hot|weather|environment|dht"
 IMU_WORDS = r"imu|level|roll|pitch|yaw|attitude|orientation|tilted|mpu"
-SENSOR_WORDS = ENV_WORDS + "|" + IMU_WORDS
+FLIGHT_WORDS = r"\b(where are we|gps|position|location|coordinates|altitude|how high|battery|speed|how fast|heading|armed|flight mode)\b"
+SENSOR_WORDS = ENV_WORDS + "|" + IMU_WORDS + "|" + FLIGHT_WORDS[3:-3]
 
 
 def _asks(task: str, words: str) -> bool:
     import re
 
     return bool(re.search(words, task, re.IGNORECASE))
+
+
+def flight_answer(f: dict[str, Any] | None) -> str:
+    """Plain answer about position / altitude / speed / battery from the flight controller."""
+    if not f or not f.get("connected"):
+        return "I have no flight-controller data, so I can't tell position, altitude, speed or battery."
+    bits: list[str] = []
+    pos = f.get("position") or {}
+    if pos.get("available"):
+        bits.append(f"we're at {pos['lat']:.5f}, {pos['lon']:.5f}, {int(round(pos['alt_rel_m']))} m above home")
+    else:
+        bits.append(f"there's no GPS position ({pos.get('message', 'no fix')})")
+    vel = f.get("velocity")
+    if vel:
+        bits.append(f"moving {vel['groundspeed_ms']:.1f} m/s")
+    att = f.get("attitude")
+    if att:
+        bits.append(f"heading {att['heading']:.0f}°")
+    bat = f.get("battery")
+    if bat and bat.get("available"):
+        bits.append(f"battery {bat['percent']:.0f} %")
+    return "The flight controller says " + ", ".join(bits) + "."
 
 
 def deterministic_report(o: dict[str, Any], task: str, actions: list[str], sugg: list[str], note: str = "",
@@ -364,11 +430,13 @@ def deterministic_report(o: dict[str, Any], task: str, actions: list[str], sugg:
         out.append(f"It's {e['temperature_c']:.1f} °C with {e['humidity_pct']:.0f} % humidity.")
     if i and _asks(task, IMU_WORDS):
         out.append(f"The drone is at roll {i['roll']:+.0f}°, pitch {i['pitch']:+.0f}°.")
+    if _asks(task, FLIGHT_WORDS):
+        out.append(flight_answer(o.get("flight")))
     if is_visual(task):
         out.append("To describe the picture itself I need the Qwen vision model (scripts/setup_ai.sh).")
     tip = next((t for t in sugg if not (did_goto and "remember" in t)), None)
     if tip and (target or not actions):
         out.append(f"Tip: {tip}")
     if o["synthetic"]:
-        out.append("(demo data)")
+        out.append("(simulation)" if (o.get("flight") or {}).get("synthetic") else "(demo data)")
     return " ".join(out)

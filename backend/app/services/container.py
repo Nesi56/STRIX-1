@@ -18,6 +18,7 @@ from app.services.ai_qwen_service import QwenService
 from app.services.camera_service import CameraService
 from app.services.detector_service import DetectorService
 from app.services.dht_service import DHTService
+from app.services.flight_link import FlightLink
 from app.services.hub import EventLog
 from app.services.imu_service import IMUService
 from app.services.mapping_service import MappingService
@@ -50,15 +51,17 @@ class Container:
         prepare_lgpio_workdir(settings)  # before the IMU/DHT/servo drivers load lgpio (Pi 5)
         self.events = EventLog()
         self.db = Database(settings.db_path)
-        self.system = SystemMonitor(settings, self.events)
-        self.imu = IMUService(settings, self.events)
+        self.flight = self._make_flight_link()
+        self.system = SystemMonitor(settings, self.events, battery=self.flight.battery if self.flight else None)
+        self.imu = IMUService(settings, self.events, flight=self.flight)
         self.dht = DHTService(settings, self.events)
-        self.servo = ServoService(settings, self.events)
+        self.servo = ServoService(settings, self.events, flight=self.flight)
         self.camera = CameraService(settings, self.events, pose=self._camera_pose)
         self.telemetry = TelemetryService(self)
         self.recording = RecordingService(settings, self.db, self.events, self.telemetry.recorder_snapshot,
                                           self.telemetry.demo_mode)
-        self.mapping = MappingService(settings, self.camera, self.events)
+        self.mapping = MappingService(settings, self.camera, self.events,
+                                      gps=self.flight.position if self.flight else None)
         self.detector = DetectorService(settings, self.camera, self.events, self.db,
                                         session_id=lambda: (self.recording.active_session or {}).get("id"),
                                         pose=self.camera_pose_now, load=self.load_now)
@@ -67,6 +70,28 @@ class Container:
         self.agent = AgentService(self)
         self.events.listeners.append(self.telemetry.broadcast_event)
         self.started = False
+
+    def _make_flight_link(self) -> FlightLink | None:
+        """MAVLink link to a flight controller: PX4 SITL in simulation, or a real one if configured."""
+        url = self.settings.effective_mavlink_url
+        if not url:
+            return None
+        sim = self.settings.sim != "off"
+        label = f"PX4 SITL #{self.settings.sim_instance}" if sim else "Flight controller"
+        try:
+            return FlightLink(url, self.events, synthetic=sim, label=label, gimbal=self.settings.gimbal_enabled)
+        except ValueError as exc:
+            log.error("ignoring STRIX_MAVLINK_URL: %s", exc)
+            self.events.add("error", "flight", str(exc))
+            return None
+
+    def sim_info(self) -> dict[str, Any] | None:
+        """What is simulated, for the dashboard and the hub (None on real hardware)."""
+        s = self.settings
+        if s.sim == "off":
+            return None
+        return {"kind": s.sim, "label": "PX4 + Gazebo simulation", "instance": s.sim_instance,
+                "model": s.sim_gz_model_name, "mavlink": s.effective_mavlink_url}
 
     def _camera_pose(self) -> tuple[float, float, float | None, float]:
         """Pose for rendering the synthetic camera only: roll, pitch, servo angle, yaw. Uses the simulated true
@@ -85,6 +110,10 @@ class Container:
     def camera_pose_now(self) -> dict[str, float]:
         """Camera pose when a frame is grabbed: IMU yaw (relative)/pitch/roll and servo tilt (+ up), degrees."""
         o = (self.imu.latest() or {}).get("orientation") or {}
+        if self.servo.stabilized:
+            # A gimbal holds the camera level: its tilt is already relative to the horizon.
+            return {"yaw": float(o.get("yaw_relative", 0.0)), "pitch": 0.0, "roll": 0.0,
+                    "tilt": float(self.servo.tilt_deg() or 0.0)}
         return {"yaw": float(o.get("yaw_relative", 0.0)), "pitch": float(o.get("pitch", 0.0)),
                 "roll": float(o.get("roll", 0.0)), "tilt": float(self.servo.tilt_deg() or 0.0)}
 
@@ -111,13 +140,15 @@ class Container:
         loop = asyncio.get_running_loop()
         self.camera.hub.bind_loop(loop)
         # Sensors first: they must run regardless of camera/AI state.
+        if self.flight is not None:
+            await self._safe("flight", self.flight.start)
         await self._safe("system", self.system.start)
         await self._safe("imu", self.imu.start)
         await self._safe("dht11", self.dht.start)
         await self._safe("servo", self.servo.start)
         await self._safe("camera", lambda: asyncio.to_thread(self.camera.start))
         await self._safe("detector", self.detector.start)
-        if self.camera.is_synthetic and self.settings.mock_scene != "outdoor":
+        if self.camera.is_mock and self.settings.mock_scene != "outdoor":
             self.imu.set_mock_profile(self.settings.mock_scene)
             self.detector.set_prompts(self.DEMO_PROMPTS[self.settings.mock_scene], quiet=True)
         await self._safe("memory", self.memory.start)
@@ -127,7 +158,8 @@ class Container:
         await self._safe("qwen", self.qwen.start)
         await self._safe("agent", self.agent.start)
         self.started = True
-        mode = "SYNTHETIC DEMO MODE" if self.settings.mock else "hardware mode"
+        mode = ("SIMULATION (PX4 + Gazebo)" if self.settings.sim != "off"
+                else "SYNTHETIC DEMO MODE" if self.settings.mock else "hardware mode")
         self.events.add("info", "system", f"STRIX-1 backend started ({mode})")
 
     async def stop(self) -> None:
@@ -142,7 +174,8 @@ class Container:
         self.agent.stop("backend shutting down")
         await self.agent.shutdown()
         for name, fn in (("detector", self.detector.stop), ("servo", self.servo.stop), ("camera", self.camera.stop), ("dht11", self.dht.stop),
-                         ("imu", self.imu.stop), ("system", self.system.stop)):
+                         ("imu", self.imu.stop), ("system", self.system.stop),
+                         ("flight", self.flight.stop if self.flight else (lambda: None))):
             try:
                 await asyncio.to_thread(fn)
             except Exception:

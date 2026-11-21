@@ -9,6 +9,9 @@ any browser on the same Wi-Fi; no VNC or monitor needed.
 
 > **Several drones?** Run the self-hosted Rust hub on a laptop: [docs/HUB.md](docs/HUB.md).
 >
+> **No drones yet?** Simulate a whole fleet with PX4 + Gazebo: [docs/SIMULATION.md](docs/SIMULATION.md).
+> New hardware ideas: [docs/SENSORS.md](docs/SENSORS.md).
+>
 > **Judges:** start with **[docs/JUDGES.md](docs/JUDGES.md)** for a 3-minute demo script.
 
 ![console](docs/img/dashboard.png)
@@ -144,7 +147,7 @@ Built and tested without the physical drone (x86-64 Linux, demo mode, headless b
 
 ## Documentation
 
-[HUB (multi-drone)](docs/HUB.md) · [JUDGES](docs/JUDGES.md) · [DEVPOST](docs/DEVPOST.md) · [DEMO_VIDEO](docs/DEMO_VIDEO.md) · [PRESENTATION](docs/PRESENTATION_SCRIPT.md) · [SETUP_PI](docs/SETUP_PI.md) · [HARDWARE](docs/HARDWARE.md) · [AI](docs/AI.md) ·
+[HUB (multi-drone)](docs/HUB.md) · [SIMULATION](docs/SIMULATION.md) · [SENSORS](docs/SENSORS.md) · [JUDGES](docs/JUDGES.md) · [DEVPOST](docs/DEVPOST.md) · [DEMO_VIDEO](docs/DEMO_VIDEO.md) · [PRESENTATION](docs/PRESENTATION_SCRIPT.md) · [SETUP_PI](docs/SETUP_PI.md) · [HARDWARE](docs/HARDWARE.md) · [AI](docs/AI.md) ·
 [STREAMING](docs/STREAMING.md) · [API](docs/API.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) ·
 [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) · [HARDWARE_VERIFICATION](docs/HARDWARE_VERIFICATION.md)
 

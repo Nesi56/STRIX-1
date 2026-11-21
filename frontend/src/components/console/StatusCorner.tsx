@@ -35,6 +35,8 @@ export function StatusCorner() {
   const sys = st?.system;
   const pw = sys?.power;
   const mem = st?.memory;
+  const fl = st?.flight;
+  const gimbal = !!sv?.stabilized;
 
   const qTone: Tone = q?.state === "ready" ? "ok" : q?.state === "loading" || (q?.installed && q?.state !== "error") ? "warn" : "crit";
   const qValue = q?.state === "ready" ? (q.vision_capable ? "ready · sees images" : "ready")
@@ -42,10 +44,16 @@ export function StatusCorner() {
   const qHint = q?.state === "ready" || q?.state === "loading" ? null
     : q?.installed ? (q?.state === "error" ? q.detail : null) : "run scripts/setup_ai.sh once";
   const detTone: Tone = det?.engine === "hog" ? "warn" : devTone(det?.status.state);
-  const pin = sv ? `GPIO${sv.gpio}${sv.pin ? `/pin ${sv.pin}` : ""}` : "";
+  const pin = sv ? (gimbal ? "gimbal" : `GPIO${sv.gpio}${sv.pin ? `/pin ${sv.pin}` : ""}`) : "";
   const svTone: Tone = !sv?.available ? "crit" : sv.estop_latched ? "crit" : sv.armed ? "ok" : "dim";
   const svValue = !sv ? "—" : !sv.available ? "not working" : sv.estop_latched ? "E-STOP" : `${sv.armed ? "on" : "off"} · ${pin}`;
   const battTone: Tone = pw?.undervoltage_now ? "crit" : pw?.undervoltage_occurred ? "warn" : "ok";
+  const bat = pw?.battery;
+  const batShown = bat?.available && bat.percent != null;
+  const flTone: Tone = !fl ? "dim" : !fl.connected ? "crit" : fl.synthetic ? "synth" : "ok";
+  const flValue = !fl ? "—" : !fl.connected ? "no link"
+    : [fl.autopilot, fl.armed ? "ARMED" : "disarmed", fl.mode, fl.landed].filter(Boolean).join(" · ");
+  const pos = fl?.position;
 
   return (
     <section className="panel shrink-0 px-2.5 py-1.5">
@@ -58,22 +66,31 @@ export function StatusCorner() {
       <Row label="YOLO" tone={detTone} value={det ? (det.engine === "hog" ? "basic (people only)" : `${det.fps.toFixed(1)} fps`) : "—"}
         hint={det?.engine === "hog" ? "run scripts/setup_ai.sh" : det?.slowed ? `slowed to cool down (${det.slowed})` : det?.status.error} />
       <Row label="QWEN" tone={qTone} value={qValue} hint={qHint} title={q?.detail ?? undefined} />
-      <Row label="MPU6050" tone={devTone(imu?.status.state)}
+      {fl && <Row label="FLIGHT" tone={flTone} value={flValue} hint={fl.connected ? null : fl.status.error}
+        title={`${fl.label}: read-only telemetry over MAVLink. The pilot flies; STRIX-1 never commands flight.`} />}
+      {fl && <Row label="GPS" tone={pos?.available ? (pos.synthetic ? "synth" : "ok") : "warn"}
+        value={pos?.available ? `${pos.lat!.toFixed(5)}, ${pos.lon!.toFixed(5)} · ${(pos.alt_rel_m ?? 0).toFixed(1)} m` : "no fix"}
+        hint={pos?.available ? `${pos.fix} · ${pos.satellites ?? "?"} satellites${pos.synthetic ? " · simulated" : ""}` : pos?.message ?? null} />}
+      <Row label={imu?.status.backend === "mavlink-imu" ? "IMU" : "MPU6050"} tone={devTone(imu?.status.state)}
         value={imu?.latest ? `roll ${signed(imu.latest.orientation.roll, 0)}° pitch ${signed(imu.latest.orientation.pitch, 0)}°` : imu?.status.state ?? "—"}
         hint={imu?.latest ? null : imu?.status.error} />
       <Row label="DHT11" tone={devTone(env?.status.state)}
         value={env?.latest ? `${env.latest.temperature_c.toFixed(1)} °C · ${env.latest.humidity_pct.toFixed(0)} %` : env?.status.state ?? "—"}
         hint={env?.latest ? null : env?.status.error} />
-      <Row label="SERVO" tone={svTone} value={svValue} hint={!sv?.available ? sv?.status.error : null}
-        title={sv?.available ? "SG90 camera tilt servo. It has no sensor, so the Pi can't detect it — tap Servo on under the video and watch it move." : undefined} />
+      <Row label={gimbal ? "GIMBAL" : "SERVO"} tone={svTone} value={svValue} hint={!sv?.available ? sv?.status.error : null}
+        title={gimbal ? "Camera gimbal on the flight controller (pointing only). It reports its angle back."
+          : sv?.available ? "SG90 camera tilt servo. It has no sensor, so the Pi can't detect it — tap Servo on under the video and watch it move." : undefined} />
       <Row label="MEMORY" tone={mem ? (mem.counts.hidden ? "warn" : "ok") : "dim"}
         value={mem ? `${mem.counts.seen} seen · ${mem.counts.remembered + mem.counts.hidden} remembered` : "—"} />
       <Row label="CPU" tone={sys?.cpu_temp_c == null ? "dim" : sys.cpu_temp_c >= 80 ? "crit" : sys.cpu_temp_c >= 70 ? "warn" : "ok"}
         value={sys?.cpu_temp_c == null ? "—" : `${sys.cpu_temp_c.toFixed(0)} °C`}
         hint={sys?.cpu_temp_c != null && sys.cpu_temp_c >= 75 ? "hot: YOLO and Qwen's comments are slowed" : null}
         title="The Pi 5 throttles at 85 °C. An Active Cooler is strongly recommended when running AI." />
-      <Row label="POWER" tone={battTone} value={pw?.undervoltage_now ? "LOW VOLTAGE" : pw?.undervoltage_occurred ? "dipped low earlier" : "OK"}
-        title={pw?.battery?.reason ?? "The USB power bank doesn't report its charge to the Pi, so battery % can't be shown."} />
+      {batShown
+        ? <Row label="BATTERY" tone={bat!.synthetic ? "synth" : (bat!.percent ?? 0) < 25 ? "crit" : (bat!.percent ?? 0) < 40 ? "warn" : "ok"}
+            value={`${bat!.percent} %${bat!.voltage_v ? ` · ${bat!.voltage_v.toFixed(1)} V` : ""}`} title={bat!.source} />
+        : <Row label="POWER" tone={battTone} value={pw?.undervoltage_now ? "LOW VOLTAGE" : pw?.undervoltage_occurred ? "dipped low earlier" : "OK"}
+            title={pw?.battery?.reason ?? "The USB power bank doesn't report its charge to the Pi, so battery % can't be shown."} />}
     </section>
   );
 }

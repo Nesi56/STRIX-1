@@ -146,7 +146,7 @@ export function VideoFeed() {
       )}
       <div className="absolute left-2 top-2 flex items-center gap-2 text-[10.5px]">
         <span className={`rounded-[3px] px-1.5 py-0.5 ${m.synthetic ? "bg-synth/20 text-synth" : "bg-accent/15 text-accent"}`}>
-          ● {m.synthetic ? "SYNTHETIC FEED" : "LIVE"}
+          ● {m.synthetic ? (st?.sim ? "SIMULATED FEED · GAZEBO" : "SYNTHETIC FEED") : "LIVE"}
         </span>
         {rec?.active && <span className="rounded-[3px] bg-crit/20 px-1.5 py-0.5 text-crit"><Circle size={8} className="blink inline fill-current" /> REC {fmtDuration(rec.duration_s)}</span>}
       </div>

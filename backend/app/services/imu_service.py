@@ -190,10 +190,33 @@ class MockIMUBackend:
         pass
 
 
+class MavlinkImuBackend:
+    """The flight controller's IMU over MAVLink, in place of the MPU6050 (simulation, or a drone whose
+    flight controller talks MAVLink). Feeds the same orientation filter as the real sensor."""
+
+    name = "mavlink-imu"
+
+    def __init__(self, link: Any) -> None:
+        self._link = link
+        self.synthetic = bool(link.synthetic)
+        self._seq = 0
+
+    def read(self):
+        got = self._link.wait_imu(self._seq, timeout=0.25)
+        if got is None:
+            raise RuntimeError(f"no IMU data from {self._link.label}")
+        self._seq, (accel, gyro, temp) = got
+        return accel, gyro, temp
+
+    def close(self) -> None:
+        pass
+
+
 class IMUService:
-    def __init__(self, settings: Settings, events: EventLog) -> None:
+    def __init__(self, settings: Settings, events: EventLog, flight: Any = None) -> None:
         self.settings = settings
         self.events = events
+        self._flight = flight  # FlightLink, for the "mavlink" backend
         self.status = DeviceStatus("imu")
         self._axis_map = parse_axis_map(settings.imu_axis_map)
         self._filter = ComplementaryFilter(alpha=settings.imu_filter_alpha)
@@ -214,7 +237,7 @@ class IMUService:
 
     # ----------------------------------------------------------- lifecycle
     def _make_backend(self) -> IMUBackend | None:
-        mode = self.settings.backend_for(self.settings.imu_backend)
+        mode = self.settings.backend_for(self.settings.imu_backend, "imu")
         if mode == "disabled":
             self.status.backend = "disabled"
             self.status.set(DeviceState.DISABLED, "disabled by configuration")
@@ -223,6 +246,14 @@ class IMUService:
             self.status.backend = MockIMUBackend.name
             self.status.synthetic = True
             return MockIMUBackend()
+        if mode == "mavlink":
+            self.status.backend = MavlinkImuBackend.name
+            if self._flight is None:
+                self.status.set(DeviceState.DISCONNECTED, "no flight-controller link (set STRIX_MAVLINK_URL)")
+                return None
+            backend = MavlinkImuBackend(self._flight)
+            self.status.synthetic = backend.synthetic
+            return backend
         try:
             backend = AdafruitMPU6050Backend(self.settings)
             self.status.backend = backend.name
@@ -267,7 +298,7 @@ class IMUService:
                     last_retry = time.monotonic()
                     self._backend = self._make_backend()
                     if self._backend is not None:
-                        self.events.add("info", "imu", "MPU6050 connected")
+                        self.events.add("info", "imu", f"{self.device_name} connected")
                 stop.wait(0.5)
                 continue
             try:
@@ -276,10 +307,10 @@ class IMUService:
             except Exception as exc:
                 consecutive_errors += 1
                 if consecutive_errors == 5:
-                    self.status.set(DeviceState.DEGRADED, f"I2C read errors: {exc}")
+                    self.status.set(DeviceState.DEGRADED, f"read errors: {exc}")
                 if consecutive_errors >= 25:
-                    self.status.set(DeviceState.DISCONNECTED, f"MPU6050 stopped responding: {exc}")
-                    self.events.add("error", "imu", f"MPU6050 lost: {exc}")
+                    self.status.set(DeviceState.DISCONNECTED, f"{self.device_name} stopped responding: {exc}")
+                    self.events.add("error", "imu", f"{self.device_name} lost: {exc}")
                     try:
                         self._backend.close()
                     finally:
@@ -341,6 +372,10 @@ class IMUService:
                 stop.wait(delay)
             else:
                 next_t = time.monotonic()  # fell behind; don't try to catch up
+
+    @property
+    def device_name(self) -> str:
+        return "vehicle IMU (MAVLink)" if self.status.backend == MavlinkImuBackend.name else "MPU6050"
 
     # ------------------------------------------------------------- readers
     def latest(self) -> dict[str, Any] | None:

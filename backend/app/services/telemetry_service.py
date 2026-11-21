@@ -91,7 +91,8 @@ class TelemetryService:
 
     def demo_mode(self) -> bool:
         c = self.c
-        return bool(c.settings.mock or any(s.synthetic for s in (c.imu.status, c.dht.status, c.camera.status, c.servo.status)))
+        return bool(c.settings.mock or c.settings.sim != "off"
+                    or any(s.synthetic for s in (c.imu.status, c.dht.status, c.camera.status, c.servo.status)))
 
     def fast_part(self) -> dict[str, Any]:
         c = self.c
@@ -123,6 +124,8 @@ class TelemetryService:
             "detector": c.detector.state(),
             "mapping": c.mapping.state(include_trajectory=False),
             "recording": c.recording.status(),
+            "flight": c.flight.snapshot() if c.flight else None,
+            "sim": c.sim_info(),
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -142,6 +145,19 @@ class TelemetryService:
             "servo": {"status": c.servo.status.to_dict(), "commanded_angle": c.servo.current},
             "camera": {"status": c.camera.status.to_dict(), "measured_fps": c.camera.measured_fps},
             "system": c.system.latest(),
+            "flight": self._flight_brief(),
+        }
+
+    def _flight_brief(self) -> dict[str, Any] | None:
+        """Position/attitude/battery from the flight controller for recordings (None without a link)."""
+        f = self.c.flight
+        if f is None:
+            return None
+        pos, att, bat = f.position(), f.attitude, f.battery()
+        return {
+            "connected": f.connected, "synthetic": f.synthetic, "armed": f.hb.get("armed"), "mode": f.hb.get("mode"),
+            "lat": pos.get("lat"), "lon": pos.get("lon"), "alt_rel_m": pos.get("alt_rel_m"),
+            "heading": att["heading"] if att else None, "battery_percent": bat.get("percent") if bat else None,
         }
 
     async def start(self) -> None:

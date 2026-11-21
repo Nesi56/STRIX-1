@@ -797,8 +797,12 @@ class CameraService:
         self.status.touch()
         self.hub.publish(frame)
 
+    def _backend_status(self, state: DeviceState, error: str | None = None) -> None:
+        """Backends that start asynchronously (the simulator's camera) report their own state."""
+        self.status.set(state, error)
+
     def start(self) -> None:
-        mode = self.settings.backend_for(self.settings.camera_backend)
+        mode = self.settings.backend_for(self.settings.camera_backend, "camera")
         if mode == "disabled":
             self.status.backend = "disabled"
             self.status.set(DeviceState.DISABLED, "disabled by configuration")
@@ -806,12 +810,17 @@ class CameraService:
         try:
             if mode == "mock":
                 self._backend = MockCameraBackend(self.settings, self._publish, self._pose)
+            elif mode == "gazebo":
+                from app.services.sim_camera import GazeboCameraBackend
+
+                self._backend = GazeboCameraBackend(self.settings, self._publish, self._backend_status)
             else:
                 self._backend = Picamera2Backend(self.settings, self._publish)
             self.status.backend = self._backend.name
             self.status.synthetic = self._backend.synthetic
             self._backend.start()
-            self.status.set(DeviceState.SYNTHETIC if self.status.synthetic else DeviceState.OK)
+            if not getattr(self._backend, "reports_status", False):
+                self.status.set(DeviceState.SYNTHETIC if self.status.synthetic else DeviceState.OK)
         except Exception as exc:
             self.status.backend = self.status.backend if self.status.backend != "none" else "picamera2"
             self.status.set(DeviceState.DISCONNECTED, f"camera unavailable: {exc}")
@@ -926,17 +935,22 @@ class CameraService:
     def is_synthetic(self) -> bool:
         return bool(self._backend is not None and self._backend.synthetic)
 
+    @property
+    def is_mock(self) -> bool:
+        """The built-in demo camera (it knows its own objects, so it can stand in for YOLO)."""
+        return isinstance(self._backend, MockCameraBackend)
+
     def scene(self) -> dict[str, Any] | None:
-        """Synthetic demo scene state (None on real hardware)."""
+        """Synthetic demo scene state (None on real hardware and in the simulator)."""
         b = self._backend
-        if b is None or not b.synthetic:
+        if not self.is_mock:
             return None
         return {"scene": self.settings.mock_scene, **getattr(b, "scene_info", {})}
 
     def set_scene(self, name: str) -> dict[str, Any]:
         b = self._backend
-        if b is None or not b.synthetic:
-            raise CameraError("demo scenes exist only for the synthetic camera (STRIX_MOCK=true)")
+        if not self.is_mock:
+            raise CameraError("demo scenes exist only for the built-in demo camera (STRIX_MOCK=true)")
         if name not in ("outdoor", "cups"):
             raise CameraError("scene must be 'outdoor' or 'cups'")
         self.settings.mock_scene = name  # type: ignore[assignment]

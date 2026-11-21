@@ -180,10 +180,12 @@ class MappingService:
     ``detector_service``; this service never turns them into a position.
     """
 
-    def __init__(self, settings: Settings, camera: CameraService, events: EventLog) -> None:
+    def __init__(self, settings: Settings, camera: CameraService, events: EventLog,
+                 gps: Any = None) -> None:
         self.settings = settings
         self.camera = camera
         self.events = events
+        self._gps = gps  # FlightLink.position: GPS from a flight controller (real or simulated), or None
         self._lock = threading.Lock()
         self._vo: MonocularVO | None = None
         self._vo_thread: StoppableThread | None = None
@@ -269,12 +271,28 @@ class MappingService:
         }
 
     def position(self) -> dict[str, Any]:
-        # Only a validated, running source may ever provide a position (none exists yet).
+        # Only a validated, running source may provide a position: a flight controller's GPS with a 3D fix
+        # (simulated GPS is labelled synthetic). Visual odometry never does.
+        if self._gps is not None:
+            try:
+                pos = self._gps()
+            except Exception:
+                pos = None
+            if pos and pos.get("available"):
+                return pos
+            if pos:
+                return {**pos, "message": pos.get("message") or POSITION_UNAVAILABLE}
         return {"available": False, "message": POSITION_UNAVAILABLE, "source": None}
 
     def state(self, include_trajectory: bool = True) -> dict[str, Any]:
+        pos = self.position()
+        if self._gps is not None:
+            g = self.sources["gps"]
+            g.installed, g.running, g.validated = True, bool(pos.get("available")), bool(pos.get("available"))
+            g.name = "GNSS via flight controller (MAVLink)"
+            g.note = pos.get("source") or pos.get("message") or ""
         return {
-            "position": self.position(),
+            "position": pos,
             "sources": [s.to_dict() for s in self.sources.values()],
             "visual_odometry": self.vo_state() if include_trajectory else {"enabled": self._vo_thread is not None},
             "imu_position": "not computed — accelerometer double integration is not a valid localization source",

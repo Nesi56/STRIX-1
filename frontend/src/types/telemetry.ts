@@ -52,10 +52,14 @@ export interface ServoState {
   attached: boolean;
   limits: { min_angle: number; max_angle: number; center_angle: number; max_speed_dps: number; hardware_min: number; hardware_max: number };
   pulse_range_us: [number, number];
-  gpio: number;
+  gpio: number | null;
   pin?: number | null;
   estop_latched?: boolean;
   position_feedback: boolean;
+  /** Gimbal only: the angle it reports back. */
+  measured_tilt_deg?: number | null;
+  /** True when the camera is on a stabilised gimbal (simulation / flight-controller gimbal). */
+  stabilized?: boolean;
   tilt_deg: number | null;
   up_is_positive: boolean;
   requested_angle?: number;
@@ -88,7 +92,11 @@ export interface PowerInfo {
   undervoltage_occurred: boolean | null;
   input_voltage_v: number | null;
   source: string | null;
-  battery: { available: boolean; percent: number | null; reason: string };
+  /** Only from real telemetry (a flight controller, real or simulated); never estimated. */
+  battery: {
+    available: boolean; percent: number | null; reason: string | null;
+    voltage_v?: number | null; current_a?: number | null; source?: string; synthetic?: boolean;
+  };
 }
 
 export interface SystemInfo {
@@ -230,6 +238,31 @@ export interface TelemetryState {
   agent?: AgentState;
   memory?: MemoryState;
   recording: RecordingStatus | null;
+  flight?: FlightState | null;
+  sim?: SimInfo | null;
+}
+
+export interface SimInfo { kind: string; label: string; instance: number; model: string; mavlink: string }
+
+/** Flight controller over MAVLink (PX4/ArduPilot, real or simulated). Read-only: STRIX-1 never commands flight. */
+export interface FlightState {
+  status: DeviceStatus;
+  label: string;
+  synthetic: boolean;
+  connected: boolean;
+  autopilot: string | null;
+  vehicle: string | null;
+  armed: boolean | null;
+  mode: string | null;
+  landed: string | null;
+  attitude: { roll: number; pitch: number; yaw: number; heading: number } | null;
+  velocity: { groundspeed_ms: number; climb_ms: number } | null;
+  position: {
+    available: boolean; message?: string; source: string | null; synthetic?: boolean; lat?: number; lon?: number;
+    alt_rel_m?: number; fix?: string; satellites?: number | null;
+  };
+  battery: { available: boolean; percent: number | null; voltage_v: number | null; source: string; synthetic: boolean } | null;
+  gimbal: { enabled: boolean; control: string; target_pitch_deg: number | null; last_ack: string | null } | null;
 }
 
 export interface Session {

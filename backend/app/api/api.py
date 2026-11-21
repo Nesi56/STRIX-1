@@ -70,7 +70,7 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 async def health(request: Request) -> dict[str, Any]:
     c = get_container(request)
     return {"status": "ok", "service": "strix-1", "version": __version__, "server_time": time.time(),
-            "uptime_s": time.time() - _STARTED, "demo_mode": c.telemetry.demo_mode()}
+            "uptime_s": time.time() - _STARTED, "demo_mode": c.telemetry.demo_mode(), "sim": c.sim_info()}
 
 
 @public.get("/auth/status")
@@ -153,6 +153,16 @@ async def sensors(request: Request) -> dict[str, Any]:
         "environment": {"status": c.dht.status.to_dict(), "latest": c.dht.latest()},
         "devices": {d.name: d.to_dict() for d in (c.imu.status, c.dht.status, c.servo.status, c.camera.status)},
     }
+
+
+@router.get("/flight")
+async def flight(request: Request) -> dict[str, Any]:
+    """Flight-controller telemetry over MAVLink (read-only; real or PX4 SITL). STRIX-1 never commands flight."""
+    c = get_container(request)
+    if c.flight is None:
+        return {"configured": False, "message": "no flight-controller link (STRIX_MAVLINK_URL or STRIX_SIM)",
+                "sim": c.sim_info()}
+    return {"configured": True, "sim": c.sim_info(), **c.flight.snapshot()}
 
 
 @router.get("/imu")

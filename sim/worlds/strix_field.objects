@@ -1,0 +1,12 @@
+# Objects run_fleet.sh adds to the strix_field world: name | Gazebo Fuel model URI | x y z (metres) | yaw (rad)
+# Drones spawn near the origin facing +x (east). Models download once from fuel.gazebosim.org, then are cached
+# in ~/.gz/fuel. A model that cannot be downloaded is skipped with a warning. Add your own lines freely.
+person_1 | https://fuel.gazebosim.org/1.0/OpenRobotics/models/Casual female   | 12 -2 0 | 3.14
+person_2 | https://fuel.gazebosim.org/1.0/OpenRobotics/models/Standing person | 15 5 0  | -2.4
+person_3 | https://fuel.gazebosim.org/1.0/OpenRobotics/models/Walking person  | 22 1 0  | 3.0
+car_1    | https://fuel.gazebosim.org/1.0/OpenRobotics/models/Hatchback red   | 20 -7 0 | 1.57
+car_2    | https://fuel.gazebosim.org/1.0/OpenRobotics/models/Pickup          | 27 7 0  | 0.3
+car_3    | https://fuel.gazebosim.org/1.0/OpenRobotics/models/SUV             | 18 13 0 | 2.6
+cone_1   | https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Cone | 8 -1 0 | 0
+cone_2   | https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Cone | 8 2 0  | 0
+cone_3   | https://fuel.gazebosim.org/1.0/OpenRobotics/models/Construction Cone | 8 5 0  | 0

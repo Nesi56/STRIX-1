@@ -1,0 +1,2 @@
+# Simulation / flight-controller link (MAVLink). Also enough for a real PX4/ArduPilot flight controller.
+pymavlink>=2.4.40

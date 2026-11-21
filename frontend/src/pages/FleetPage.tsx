@@ -1,6 +1,7 @@
 import { ArrowRight, Brain, LogOut, OctagonX, VideoOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Wordmark, useUtcClock } from "../components/common/Brand";
+import { TacticalPlot } from "../components/fleet/TacticalPlot";
 import { useToast } from "../components/common/toast";
 import { errorMessage, post } from "../services/api";
 import type { FleetDrone, FleetResponse } from "../types/fleet";
@@ -8,7 +9,7 @@ import type { FleetDrone, FleetResponse } from "../types/fleet";
 const DEFAULT_COLORS = ["#6fd3ff", "#f2b84b", "#c69bff", "#7be0a8", "#ff8a95", "#9db4ff", "#f2e05c", "#59e0c5"];
 export const droneColor = (d: FleetDrone, i: number) => d.color ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length];
 
-const n = (v: number | null | undefined, digits = 0) => (v === null || v === undefined ? "—" : v.toFixed(digits));
+const n = (v: number | null | undefined, digits = 0) => (v === null || v === undefined ? "—" : (Math.abs(v) < 0.5 / 10 ** digits ? 0 : v).toFixed(digits));
 const signed = (v: number | null | undefined, digits = 0) => (v === null || v === undefined ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(digits)}`);
 
 /** Relative heading dial: yaw since start-up (not compass north — there is no magnetometer or GPS). */
@@ -50,9 +51,17 @@ function Horizon({ roll, pitch, color }: { roll: number | null; pitch: number | 
   );
 }
 
+/** True heading from the flight controller when there is one, else yaw relative to start-up ("r"). */
+function heading(d: FleetDrone): string {
+  if (d.flight?.heading != null) return `${String(Math.round(d.flight.heading) % 360).padStart(3, "0")}°`;
+  return d.attitude.yaw === null ? "—" : `${n(((d.attitude.yaw % 360) + 360) % 360)}°r`;
+}
+
 function statusOf(d: FleetDrone): { label: string; cls: string } {
   if (!d.online) return { label: "NO LINK", cls: "border-crit/50 text-crit" };
   if (d.servo.estop_latched) return { label: "E-STOP", cls: "border-crit/50 bg-crit/15 text-crit" };
+  if (d.flight?.landed === "in air" || d.flight?.landed === "taking off" || d.flight?.landed === "landing")
+    return { label: d.flight.landed.toUpperCase(), cls: "border-warn/50 text-warn" };
   if (d.agent.status && d.agent.status !== "idle") return { label: "TASKED", cls: "border-blue/50 text-blue" };
   return { label: "READY", cls: "border-ok/50 text-ok" };
 }
@@ -69,12 +78,14 @@ function AssetRow({ d, color }: { d: FleetDrone; color: string }) {
           <span className={`border px-1 text-[10px] font-semibold tracking-[0.14em] ${s.cls}`}>{s.label}</span>
         </div>
         <div className="num mt-0.5 flex gap-3 text-[11px] text-muted">
-          <span>HDG {d.attitude.yaw === null ? "—" : `${n(((d.attitude.yaw % 360) + 360) % 360)}°r`}</span>
-          <span>{d.environment.temperature_c === null ? "—" : `${n(d.environment.temperature_c, 1)}°C`}</span>
+          <span>HDG {heading(d)}</span>
+          {d.position?.alt_rel_m != null
+            ? <span>{n(d.position.alt_rel_m, 0)} m</span>
+            : <span>{d.environment.temperature_c === null ? "—" : `${n(d.environment.temperature_c, 1)}°C`}</span>}
           <span>{d.objects.reduce((a, o) => a + o.count, 0)} obj</span>
         </div>
       </div>
-      <HeadingDial yaw={d.online ? d.attitude.yaw : null} color={color} size={34} />
+      <HeadingDial yaw={d.online ? (d.flight?.heading ?? d.attitude.yaw) : null} color={color} size={34} />
     </a>
   );
 }
@@ -120,7 +131,9 @@ function DroneTile({ d, color, live }: { d: FleetDrone; color: string; live: boo
         <h2 className="truncate text-[16px] font-bold tracking-[0.16em]">{d.name.toUpperCase()}</h2>
         <span className="num text-[11px] text-dim">{d.id}</span>
         <div className="ml-auto flex shrink-0 items-center gap-1.5 text-[10.5px] font-semibold tracking-[0.14em]">
-          {d.demo_mode && <span className="border border-synth/50 px-1.5 text-synth" title="Simulated sensors and camera">SIM DATA</span>}
+          {d.sim ? <span className="border border-synth/50 px-1.5 text-synth" title={`${d.sim.label ?? "Simulation"} (${d.sim.model ?? ""})`}>SIM · PX4</span>
+            : d.demo_mode && <span className="border border-synth/50 px-1.5 text-synth" title="Simulated sensors and camera">SIM DATA</span>}
+          {d.flight?.armed && <span className="border border-warn/50 px-1.5 text-warn" title="Motors armed (the pilot's flight controller)">ARMED</span>}
           {d.recording && <span className="border border-crit/50 px-1.5 text-crit"><span className="blink">●</span> REC</span>}
           <span className={`border px-1.5 ${s.cls}`}>{s.label}</span>
         </div>
@@ -141,7 +154,8 @@ function DroneTile({ d, color, live }: { d: FleetDrone; color: string; live: boo
         {d.online && (
           <>
             <div className="num absolute left-3 top-9 bg-black/60 px-1.5 text-[11px] text-text">
-              R {signed(d.attitude.roll, 1)}° · P {signed(d.attitude.pitch, 1)}° · HDG {n(d.attitude.yaw)}°r
+              R {signed(d.attitude.roll, 1)}° · P {signed(d.attitude.pitch, 1)}° · HDG {heading(d)}
+              {d.position?.alt_rel_m != null && ` · ALT ${n(d.position.alt_rel_m, 1)} m`}
             </div>
             {d.objects.length > 0 && (
               <div className="absolute bottom-2.5 left-3 flex max-w-[80%] flex-wrap gap-1">
@@ -166,15 +180,24 @@ function DroneTile({ d, color, live }: { d: FleetDrone; color: string; live: boo
           <Readout label="HUMID" value={d.environment.humidity_pct === null ? "—" : `${n(d.environment.humidity_pct)}%`} />
           <Readout label="PI" value={d.system.cpu_temp_c === null ? `${n(d.system.cpu_percent)}%` : `${n(d.system.cpu_temp_c)}°C`} tone={cpuHot ? "text-warn" : "text-text"}
             title={d.system.cpu_temp_c === null ? "CPU load (no temperature sensor)" : cpuHot ? "Hot: AI slowed down" : "Pi CPU temperature"} />
-          <Readout label="SERVO" value={servo.t} tone={servo.tone} />
+          <Readout label={d.servo.stabilized ? "GIMBAL" : "SERVO"} value={servo.t} tone={servo.tone} />
           <Readout label="QWEN" value={qwen.t} tone={qwen.tone} />
           <Readout label="MEMORY" value={`${d.memory.remembered}${d.memory.hidden ? ` · ${d.memory.hidden}H` : ""}`} title={`${d.memory.remembered} remembered, ${d.memory.hidden} hidden`} />
         </div>
       </div>
 
       <footer className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 pb-3 pt-2.5 text-[12px]">
-        <span className="text-dim" title="No GPS or other positioning on this drone; positions are never estimated">POS: NO GPS</span>
-        {d.battery ? <span className="num text-muted" title={`From ${d.battery.source ?? "the drone"}`}>BATT {n(d.battery.percent)}%</span>
+        {d.position
+          ? <span className="num text-muted" title={d.position.source ?? "GPS"}>
+              POS {d.position.lat.toFixed(5)}, {d.position.lon.toFixed(5)}{d.position.synthetic ? " (SIM)" : ""}
+            </span>
+          : <span className="text-dim" title="No GPS fix on this drone; positions are never estimated">POS: NO GPS</span>}
+        {d.flight?.connected && d.flight.mode && (
+          <span className="num text-muted" title={`${d.flight.label ?? "Flight controller"} (read-only: the pilot flies)`}>
+            {d.flight.mode}{d.flight.groundspeed_ms != null ? ` · ${n(d.flight.groundspeed_ms, 1)} m/s` : ""}
+          </span>
+        )}
+        {d.battery ? <span className="num text-muted" title={`From ${d.battery.source ?? "the drone"}`}>BATT {n(d.battery.percent)}%{d.battery.synthetic ? " (SIM)" : ""}</span>
           : <span className="text-dim" title="The power bank reports nothing to the Pi">BATT: NO DATA</span>}
         {d.agent.status && d.agent.status !== "idle" && d.agent.task && <span className="truncate text-blue">TASK “{d.agent.task}”</span>}
         <div className="ml-auto flex gap-1.5">
@@ -248,9 +271,14 @@ export function FleetPage({ fleet, error }: { fleet: FleetResponse | null; error
           <div className="border-t border-line">
             {drones.map((d, i) => <AssetRow key={d.id} d={d} color={droneColor(d, i)} />)}
           </div>
-          <p className="hidden px-3 py-3 text-[11px] leading-relaxed text-dim lg:block">
-            HDG is heading relative to start-up (no compass). No map: the drones have no GPS, and STRIX-1 never guesses positions.
-          </p>
+          <div className="pt-3">
+            <TacticalPlot drones={drones} colors={Object.fromEntries(drones.map((d, i) => [d.id, droneColor(d, i)]))} />
+          </div>
+          {!drones.some((d) => d.online && d.position) && (
+            <p className="hidden px-3 pb-3 text-[11px] leading-relaxed text-dim lg:block">
+              HDG with "r" is heading relative to start-up (no compass). No map: no drone reports a GPS fix, and STRIX-1 never guesses positions.
+            </p>
+          )}
         </aside>
         <main className="grid-bg min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
           {error && !fleet && <div className="mb-3 border border-crit/40 bg-crit/10 px-3 py-2 text-crit">Hub not reachable: {error}</div>}

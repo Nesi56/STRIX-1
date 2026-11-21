@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- STRIX-1 simulation world, based on PX4's default.sdf (BSD-3-Clause, PX4 Development Team).
+     Systems (physics, sensors, ...) come from PX4's server.config, so this file lists none.
+     People, cars and cones are added by scripts/sim/run_fleet.sh from strix_field.objects after the world
+     starts, so a model that cannot be downloaded never stops the world from loading. -->
+<sdf version="1.9">
+  <world name="strix_field">
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+    <scene>
+      <grid>false</grid>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.62 0.75 0.88 1</background>
+      <shadows>true</shadows>
+    </scene>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>1 1</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode/>
+            </friction>
+            <bounce/>
+            <contact/>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>500 500</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.33 0.45 0.25 1</ambient>
+            <diffuse>0.38 0.52 0.28 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+        <pose>0 0 0 0 -0 0</pose>
+        <inertial>
+          <pose>0 0 0 0 -0 0</pose>
+          <mass>1</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>1</iyy>
+            <iyz>0</iyz>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <enable_wind>false</enable_wind>
+      </link>
+      <pose>0 0 0 0 -0 0</pose>
+      <self_collide>false</self_collide>
+    </model>
+    <light name="sunUTC" type="directional">
+      <pose>0 0 500 0 -0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0.001 0.625 -0.78</direction>
+      <diffuse>0.904 0.904 0.904 1</diffuse>
+      <specular>0.271 0.271 0.271 1</specular>
+      <attenuation>
+        <range>2000</range>
+        <linear>0</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg> 8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
+
+    <model name="marker_0">
+      <static>true</static>
+      <pose>5 -10 0.5 0 0 0</pose>
+      <link name="link">
+        <visual name="v"><geometry><cylinder><radius>0.15</radius><length>1.0</length></cylinder></geometry>
+          <material><ambient>1 0.45 0.05 1</ambient><diffuse>1 0.45 0.05 1</diffuse></material></visual>
+        <collision name="c"><geometry><cylinder><radius>0.15</radius><length>1.0</length></cylinder></geometry></collision>
+      </link>
+    </model>
+    <model name="marker_1">
+      <static>true</static>
+      <pose>5 16 0.5 0 0 0</pose>
+      <link name="link">
+        <visual name="v"><geometry><cylinder><radius>0.15</radius><length>1.0</length></cylinder></geometry>
+          <material><ambient>1 0.45 0.05 1</ambient><diffuse>1 0.45 0.05 1</diffuse></material></visual>
+        <collision name="c"><geometry><cylinder><radius>0.15</radius><length>1.0</length></cylinder></geometry></collision>
+      </link>
+    </model>
+    <model name="marker_2">
+      <static>true</static>
+      <pose>32 -10 0.5 0 0 0</pose>
+      <link name="link">
+        <visual name="v"><geometry><cylinder><radius>0.15</radius><length>1.0</length></cylinder></geometry>
+          <material><ambient>1 0.45 0.05 1</ambient><diffuse>1 0.45 0.05 1</diffuse></material></visual>
+        <collision name="c"><geometry><cylinder><radius>0.15</radius><length>1.0</length></cylinder></geometry></collision>
+      </link>
+    </model>
+    <model name="marker_3">
+      <static>true</static>
+      <pose>32 16 0.5 0 0 0</pose>
+      <link name="link">
+        <visual name="v"><geometry><cylinder><radius>0.15</radius><length>1.0</length></cylinder></geometry>
+          <material><ambient>1 0.45 0.05 1</ambient><diffuse>1 0.45 0.05 1</diffuse></material></visual>
+        <collision name="c"><geometry><cylinder><radius>0.15</radius><length>1.0</length></cylinder></geometry></collision>
+      </link>
+    </model>
+  </world>
+</sdf>

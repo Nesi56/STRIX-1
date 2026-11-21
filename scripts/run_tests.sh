@@ -10,3 +10,6 @@ cd "$REPO/frontend"
 npm run typecheck
 npm test
 npm run build
+
+# Rust hub (if Rust is installed)
+if command -v cargo >/dev/null; then (cd "$REPO/hub" && cargo test -q); fi

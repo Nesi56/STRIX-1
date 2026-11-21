@@ -143,9 +143,10 @@ def _hwmon_undervoltage() -> bool | None:
 
 
 class SystemMonitor:
-    def __init__(self, settings: Settings, events: EventLog) -> None:
+    def __init__(self, settings: Settings, events: EventLog, battery: Any = None) -> None:
         self.settings = settings
         self.events = events
+        self._battery = battery  # FlightLink.battery: what a flight controller reports (real or simulated)
         self._lock = threading.Lock()
         self._latest: dict[str, Any] = {}
         self._thread: StoppableThread | None = None
@@ -196,11 +197,22 @@ class SystemMonitor:
             "undervoltage_occurred": throttled["under_voltage_occurred"] if throttled else None,
             "input_voltage_v": pmic["input_voltage_v"] if pmic else None,
             "source": "vcgencmd" if throttled or pmic else ("hwmon" if uv_hwmon is not None else None),
-            "battery": {
-                "available": False,
-                "percent": None,
-                "reason": "no battery telemetry source (PD power bank exposes no data to the Pi)",
-            },
+            "battery": self._battery_info(),
+        }
+
+    def _battery_info(self) -> dict[str, Any]:
+        """Battery level only from real telemetry: a flight controller that reports it. Never estimated here."""
+        if self._battery is not None:
+            try:
+                b = self._battery()
+            except Exception:
+                b = None
+            if b:
+                return b
+        return {
+            "available": False,
+            "percent": None,
+            "reason": "no battery telemetry source (PD power bank exposes no data to the Pi)",
         }
 
     def _proc_stats(self, pid: int) -> dict[str, Any] | None:

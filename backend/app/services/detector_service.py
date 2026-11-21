@@ -78,8 +78,9 @@ class DetectorService:
         if mode == "disabled":
             self.status.set(DeviceState.DISABLED, "disabled by configuration")
             return
-        synthetic_cam = self.camera.status.synthetic
-        if mode == "synthetic" or (mode == "auto" and synthetic_cam):
+        # The built-in demo camera knows where its objects are; the Gazebo camera does not (YOLO runs on it).
+        demo_cam = self.camera.is_mock
+        if mode == "synthetic" or (mode == "auto" and demo_cam):
             self.engine_kind, self.status.synthetic = "synthetic", True
             self.status.backend = "synthetic-ground-truth"
             self.description = "Synthetic ground truth from the mock camera (demo only)"

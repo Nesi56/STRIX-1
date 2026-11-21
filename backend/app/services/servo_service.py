@@ -177,10 +177,42 @@ class MockServoBackend:
         self.pulse_us = None
 
 
+class MavlinkGimbalBackend:
+    """The camera gimbal of a MAVLink flight controller (PX4 SITL's x500_gimbal, or a real gimbal), driven
+    by the same "servo" controls. Pointing only: the link refuses every other command. The gimbal holds the
+    camera level to the horizon (stabilised), so its tilt is relative to the horizon, not the airframe."""
+
+    name = "mavlink-gimbal"
+    stabilized = True
+
+    def __init__(self, settings: Settings, link: Any) -> None:
+        self._link = link
+        self.synthetic = bool(link.synthetic)
+        self._min_pulse = settings.servo_min_pulse_us
+        self._max_pulse = settings.servo_max_pulse_us
+        self._center = settings.servo_center_angle
+        self._up = 1.0 if settings.servo_up_is_positive else -1.0
+
+    def write_pulse_us(self, pulse_us: float) -> None:
+        angle = (pulse_us - self._min_pulse) / (self._max_pulse - self._min_pulse) * HW_MAX_ANGLE
+        self._link.set_gimbal_pitch((angle - self._center) * self._up)
+
+    def measured_tilt_deg(self) -> float | None:
+        m = self._link.gimbal_measured
+        return None if m is None else round(m["pitch_deg"], 1)
+
+    def detach(self) -> None:
+        pass  # a gimbal holds its position; there is no pulse to release
+
+    def close(self) -> None:
+        pass
+
+
 class ServoService:
-    def __init__(self, settings: Settings, events: EventLog) -> None:
+    def __init__(self, settings: Settings, events: EventLog, flight: Any = None) -> None:
         self.settings = settings
         self.events = events
+        self._flight = flight  # FlightLink, for the "mavlink_gimbal" backend
         self.status = DeviceStatus("servo")
         self._cfg_path = settings.data_dir / "servo_config.json"
         self.min_angle = settings.servo_min_angle
@@ -242,7 +274,7 @@ class ServoService:
 
     # --------------------------------------------------------- lifecycle
     def _make_backend(self) -> ServoBackend | None:
-        mode = self.settings.backend_for(self.settings.servo_backend)
+        mode = self.settings.backend_for(self.settings.servo_backend, "servo")
         if mode == "disabled":
             self.status.backend = "disabled"
             self.status.set(DeviceState.DISABLED, "disabled by configuration")
@@ -250,6 +282,14 @@ class ServoService:
         if mode == "mock":
             self.status.backend, self.status.synthetic = MockServoBackend.name, True
             return MockServoBackend()
+        if mode == "mavlink_gimbal":
+            self.status.backend = MavlinkGimbalBackend.name
+            if self._flight is None or not self._flight.gimbal_enabled:
+                self.status.set(DeviceState.DISCONNECTED, "no flight-controller gimbal link (STRIX_MAVLINK_URL / STRIX_MAVLINK_GIMBAL)")
+                return None
+            b = MavlinkGimbalBackend(self.settings, self._flight)
+            self.status.synthetic = b.synthetic
+            return b
         errors = []
         # "auto" never probes sysfs PWM: on the Pi 5 a pwmchip may belong to the
         # cooling-fan controller. Hardware PWM must be selected explicitly after
@@ -348,6 +388,11 @@ class ServoService:
         return st
 
     @property
+    def stabilized(self) -> bool:
+        """True when the camera is held level to the horizon (a gimbal), not fixed to the airframe."""
+        return bool(getattr(self._backend, "stabilized", False))
+
+    @property
     def up_sign(self) -> float:
         """+1 if a larger servo angle tilts the camera up."""
         return 1.0 if self.settings.servo_up_is_positive else -1.0
@@ -423,9 +468,11 @@ class ServoService:
                 "hardware_max": HW_MAX_ANGLE,
             },
             "pulse_range_us": [self.settings.servo_min_pulse_us, self.settings.servo_max_pulse_us],
-            "gpio": self.settings.servo_gpio,
-            "pin": 12 if self.settings.servo_gpio == 18 else None,  # physical header pin of GPIO18
-            "position_feedback": False,
+            "gpio": None if self.stabilized else self.settings.servo_gpio,
+            "pin": 12 if self.settings.servo_gpio == 18 and not self.stabilized else None,  # header pin of GPIO18
+            "position_feedback": hasattr(self._backend, "measured_tilt_deg"),
+            "measured_tilt_deg": self._backend.measured_tilt_deg() if hasattr(self._backend, "measured_tilt_deg") else None,
+            "stabilized": self.stabilized,
             "tilt_deg": self.tilt_deg(),
             "up_is_positive": self.settings.servo_up_is_positive,
             "estop_latched": self.estop_latched,
